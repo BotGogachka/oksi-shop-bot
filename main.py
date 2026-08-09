@@ -19,10 +19,10 @@ logging.basicConfig(level=logging.INFO)
 # ============ ПЕРЕМЕННЫЕ ============
 BOT_TOKEN = "8909837555:AAGZOkg1i3_QoWdpq7PpGu5gJb8-KwIf7WI"
 ADMIN_ID = 8901845559
-CRYPTOBOT_TOKEN = "620220:AA3OkhMfOibpiiWmyYVll94JcNlCwVpkX6p"
+CRYPTOBOT_TOKEN = "620220:A3OkhMfOibpiiWmyYV1194JcNlCwVpkX6p"  # ТОЧНО СО СКРИНШОТА
 XROCKET_API_KEY = "64acc4de748ed47a541bb3c47"
 
-# ============ FLASK ============
+# ============ FLASK ДЛЯ WEBHOOKOV ============
 app = Flask(__name__)
 
 @app.route('/')
@@ -136,6 +136,7 @@ async def create_cryptobot_invoice(user_id, amount_usd):
         async with aiohttp.ClientSession() as session:
             async with session.post(url, headers=headers, json=payload) as resp:
                 data = await resp.json()
+                logging.info(f"CryptoBot create response: {data}")
                 if data.get("status") == "success":
                     invoice = data.get("result")
                     return {
@@ -238,7 +239,6 @@ def back_button():
     ])
 
 # ============ ОБРАБОТЧИКИ КНОПОК ============
-
 @dp.message(Command("start"))
 async def start(message: Message):
     user_id = message.from_user.id
