@@ -57,14 +57,14 @@ def health_check():
 
 # ============ WEBHOOK ДЛЯ CRYPTOBOT ============
 @app.route('/crypto_webhook', methods=['GET', 'POST'])
-async def crypto_webhook():
+def crypto_webhook():
     # Для GET-запросов (проверка в браузере)
     if request.method == 'GET':
         return "✅ CryptoBot webhook is active! Ready to receive POST requests.", 200
     
     # Для POST-запросов от CryptoBot
     try:
-        raw_data = await request.get_data()
+        raw_data = request.get_data()
         data = json.loads(raw_data)
         logging.info(f"📩 Получен вебхук от CryptoBot: {data}")
         
@@ -88,13 +88,17 @@ async def crypto_webhook():
             db.commit()
             db.close()
             
+            # Отправляем уведомление пользователю (синхронно)
             try:
-                await bot.send_message(
-                    user_id,
-                    f"✅ *Оплата подтверждена!* ✅\n\n"
-                    f"💰 Начислено: {amount_rub} ₽\n"
-                    f"🌟 Спасибо за пополнение!",
-                    parse_mode="Markdown"
+                asyncio.run_coroutine_threadsafe(
+                    bot.send_message(
+                        user_id,
+                        f"✅ *Оплата подтверждена!* ✅\n\n"
+                        f"💰 Начислено: {amount_rub} ₽\n"
+                        f"🌟 Спасибо за пополнение!",
+                        parse_mode="Markdown"
+                    ),
+                    asyncio.get_event_loop()
                 )
             except:
                 pass
@@ -104,6 +108,63 @@ async def crypto_webhook():
         return "Ignored", 200
     except Exception as e:
         logging.error(f"CryptoBot webhook error: {e}")
+        return "Error", 500
+
+# ============ WEBHOOK ДЛЯ XROCKET ============
+@app.route('/xrocket_webhook', methods=['GET', 'POST'])
+def xrocket_webhook():
+    # Для GET-запросов (проверка в браузере)
+    if request.method == 'GET':
+        return "✅ xRocket webhook is active! Ready to receive POST requests.", 200
+    
+    # Для POST-запросов от xRocket
+    try:
+        raw_data = request.get_data()
+        data = json.loads(raw_data)
+        logging.info(f"📩 Получен вебхук от xRocket: {data}")
+        
+        if data.get('status') == 'success':
+            invoice_data = data.get('data', {})
+            invoice_id = invoice_data.get('invoiceId')
+            
+            db = get_db()
+            cursor = db.cursor()
+            cursor.execute("SELECT user_id, amount FROM pending_payments WHERE invoice_id = ? AND system = 'xrocket'", 
+                          (invoice_id,))
+            result = cursor.fetchone()
+            
+            if result:
+                user_id, amount_usd = result
+                amount_rub = int(amount_usd * 100)
+                
+                cursor.execute("UPDATE users SET balance = balance + ? WHERE id = ?", (amount_rub, user_id))
+                cursor.execute("UPDATE pending_payments SET status = 'paid' WHERE invoice_id = ?", (invoice_id,))
+                db.commit()
+                db.close()
+                
+                try:
+                    asyncio.run_coroutine_threadsafe(
+                        bot.send_message(
+                            user_id,
+                            f"✅ *Оплата подтверждена!* ✅\n\n"
+                            f"💰 Начислено: {amount_rub} ₽\n"
+                            f"🚀 Спасибо за пополнение через xRocket!",
+                            parse_mode="Markdown"
+                        ),
+                        asyncio.get_event_loop()
+                    )
+                except:
+                    pass
+                
+                logging.info(f"✅ xRocket оплата: user_id={user_id}, amount={amount_rub} ₽")
+                return "OK", 200
+            else:
+                db.close()
+                logging.warning(f"xRocket: invoice {invoice_id} not found")
+                return "Invoice not found", 404
+        return "Ignored", 200
+    except Exception as e:
+        logging.error(f"xRocket webhook error: {e}")
         return "Error", 500
 
 # ============ WEBHOOK ДЛЯ XROCKET ============
