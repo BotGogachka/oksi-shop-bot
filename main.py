@@ -165,7 +165,7 @@ async def check_cryptobot_payment(invoice_id):
         async with aiohttp.ClientSession() as session:
             async with session.get(url, headers=headers, params=params) as resp:
                 text = await resp.text()
-                logging.info(f"CryptoBot check response: {text}")
+                logging.info(f"CryptoBot check response: {text[:200]}")
                 
                 try:
                     data = json.loads(text)
@@ -1095,7 +1095,6 @@ async def back_to_menu(callback: CallbackQuery):
 # ============ АДМИН: ПОПОЛНЕНИЕ БАЛАНСА ============
 @dp.message(Command("add"))
 async def add_balance(message: Message):
-    # Проверяем, что это админ
     if message.from_user.id != ADMIN_ID:
         await message.answer("⛔ Доступ запрещен")
         return
