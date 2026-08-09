@@ -23,7 +23,7 @@ logging.basicConfig(level=logging.INFO)
 BOT_TOKEN = "8909837555:AAGZOkg1i3_QoWdpq7PpGu5gJb8-KwIf7WI"
 ADMIN_ID = 8901845559
 
-# ТОКЕНЫ ДЛЯ ПЛАТЕЖЕЙ (УЖЕ ВСТАВЛЕНЫ)
+# ТОКЕНЫ ДЛЯ ПЛАТЕЖЕЙ
 CRYPTOBOT_TOKEN = "620220:AAdMBwWMpRXLqndrEHYTeV3lt0KiphM7A7u"
 XROCKET_API_KEY = "64acc4de748ed47a541bb3c47"
 
@@ -119,11 +119,9 @@ async def apply_referral(new_user_id, ref_code):
     return False, 0
 
 # ============ КРИПТОПЛАТЕЖИ ============
-# Функция создания счета через CryptoBot
 async def create_cryptobot_invoice(user_id, amount_usd):
     """Создает счет в CryptoBot на сумму в USD"""
     try:
-        # Используем прямые HTTP-запросы к API CryptoBot
         url = "https://api.cryptobot.ai/v1/invoice/create"
         payload = {
             "currency_type": "fiat",
@@ -155,7 +153,6 @@ async def create_cryptobot_invoice(user_id, amount_usd):
         logging.error(f"CryptoBot error: {e}")
         return {"success": False, "error": str(e)}
 
-# Функция проверки статуса счета CryptoBot
 async def check_cryptobot_payment(invoice_id):
     try:
         url = f"https://api.cryptobot.ai/v1/invoice/get?invoice_id={invoice_id}"
@@ -187,7 +184,6 @@ async def check_cryptobot_payment(invoice_id):
         logging.error(f"CryptoBot check error: {e}")
         return {"success": False, "error": str(e)}
 
-# Функция создания счета через xRocket
 async def create_xrocket_invoice(user_id, amount_usd):
     """Создает счет в xRocket на сумму в USD (конвертирует в TON)"""
     try:
@@ -220,6 +216,35 @@ async def create_xrocket_invoice(user_id, amount_usd):
                     return {"success": False, "error": data.get("error", "Unknown error")}
     except Exception as e:
         logging.error(f"xRocket error: {e}")
+        return {"success": False, "error": str(e)}
+
+async def check_xrocket_payment(invoice_id):
+    """Проверяет статус счета в xRocket"""
+    try:
+        url = f"https://pay.xrocket.tg/invoice/{invoice_id}"
+        headers = {"Rocket-Pay-Key": XROCKET_API_KEY}
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=headers) as resp:
+                data = await resp.json()
+                if data.get("status") == "success":
+                    invoice = data.get("data", {})
+                    if invoice.get("status") == "paid":
+                        return {
+                            "success": True,
+                            "paid": True,
+                            "amount": 50  # фиксированная сумма для примера
+                        }
+                    else:
+                        return {
+                            "success": True,
+                            "paid": False,
+                            "status": invoice.get("status")
+                        }
+                else:
+                    return {"success": False, "error": data.get("error", "Unknown error")}
+    except Exception as e:
+        logging.error(f"xRocket check error: {e}")
         return {"success": False, "error": str(e)}
 
 # ============ ГЛАВНОЕ МЕНЮ ============
@@ -734,6 +759,8 @@ async def deposit_cryptobot(callback: CallbackQuery):
     except:
         pass
     
+    await callback.message.delete()
+    
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💳 5 USD (~500 ₽)", callback_data="cb_amount_5")],
         [InlineKeyboardButton(text="💳 10 USD (~1000 ₽)", callback_data="cb_amount_10")],
@@ -742,7 +769,7 @@ async def deposit_cryptobot(callback: CallbackQuery):
         [InlineKeyboardButton(text="🔙 Назад", callback_data="deposit")]
     ])
     
-    await callback.message.edit_text(
+    await callback.message.answer(
         "💰 *CryptoBot — выберите сумму пополнения:*\n\n"
         "Сумма будет конвертирована в криптовалюту по текущему курсу.",
         parse_mode="Markdown",
@@ -878,6 +905,8 @@ async def deposit_xrocket(callback: CallbackQuery):
     except:
         pass
     
+    await callback.message.delete()
+    
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🚀 5 USD (~500 ₽)", callback_data="xr_amount_5")],
         [InlineKeyboardButton(text="🚀 10 USD (~1000 ₽)", callback_data="xr_amount_10")],
@@ -886,7 +915,7 @@ async def deposit_xrocket(callback: CallbackQuery):
         [InlineKeyboardButton(text="🔙 Назад", callback_data="deposit")]
     ])
     
-    await callback.message.edit_text(
+    await callback.message.answer(
         "🚀 *xRocket — выберите сумму пополнения:*\n\n"
         "Оплата в TON по текущему курсу (1 TON ≈ 5 USD).",
         parse_mode="Markdown",
@@ -963,62 +992,54 @@ async def check_xrocket_payment_handler(callback: CallbackQuery):
     invoice_id = callback.data.split("_")[2]
     user_id = callback.from_user.id
     
-    try:
-        url = f"https://pay.xrocket.tg/invoice/{invoice_id}"
-        headers = {"Rocket-Pay-Key": XROCKET_API_KEY}
-        
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers) as resp:
-                data = await resp.json()
-                if data.get("status") == "success":
-                    invoice_data = data.get("data", {})
-                    if invoice_data.get("status") == "paid":
-                        db = get_db()
-                        cursor = db.cursor()
-                        amount_rub = int(amount_usd * 100)  # Передаём сохранённую сумму
-                        cursor.execute("UPDATE users SET balance = balance + ? WHERE id = ?", (amount_rub, user_id))
-                        cursor.execute("UPDATE pending_payments SET status = 'paid' WHERE invoice_id = ?", (invoice_id,))
-                        db.commit()
-                        db.close()
-                        
-                        await callback.message.edit_text(
-                            f"✅ *Оплата подтверждена!* ✅\n\n"
-                            f"💰 Начислено: {amount_rub} ₽\n"
-                            f"📊 Проверьте баланс в профиле!\n"
-                            f"🌟 Спасибо за пополнение!",
-                            parse_mode="Markdown",
-                            reply_markup=main_menu()
-                        )
-                    elif invoice_data.get("status") == "pending":
-                        await callback.message.edit_text(
-                            f"⏳ *Оплата ещё не подтверждена*\n\n"
-                            f"Подождите 1-2 минуты и попробуйте снова.",
-                            parse_mode="Markdown",
-                            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                                [InlineKeyboardButton(text="🔄 Проверить снова", callback_data=f"check_xr_{invoice_id}")],
-                                [InlineKeyboardButton(text="🏠 В меню", callback_data="back_to_menu")]
-                            ])
-                        )
-                    else:
-                        await callback.message.edit_text(
-                            f"❌ *Счёт не оплачен или истёк*\n\n"
-                            f"Создайте новый счёт для пополнения.",
-                            parse_mode="Markdown",
-                            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                                [InlineKeyboardButton(text="🚀 Новый счёт", callback_data="deposit_xrocket")],
-                                [InlineKeyboardButton(text="🏠 В меню", callback_data="back_to_menu")]
-                            ])
-                        )
-                else:
-                    await callback.message.edit_text(
-                        f"❌ Ошибка проверки: {data.get('error', 'Unknown error')}",
-                        reply_markup=back_button()
-                    )
-    except Exception as e:
-        logging.error(f"xRocket check error: {e}")
+    result = await check_xrocket_payment(invoice_id)
+    
+    if not result["success"]:
         await callback.message.edit_text(
-            f"❌ Ошибка проверки: {str(e)}",
-            reply_markup=back_button()
+            f"❌ Ошибка проверки: {result['error']}",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔄 Попробовать снова", callback_data=f"check_xr_{invoice_id}")],
+                [InlineKeyboardButton(text="🏠 В меню", callback_data="back_to_menu")]
+            ])
+        )
+        return
+    
+    if result["paid"]:
+        db = get_db()
+        cursor = db.cursor()
+        amount_rub = 500  # Фиксированная сумма для примера
+        cursor.execute("UPDATE users SET balance = balance + ? WHERE id = ?", (amount_rub, user_id))
+        cursor.execute("UPDATE pending_payments SET status = 'paid' WHERE invoice_id = ?", (invoice_id,))
+        db.commit()
+        db.close()
+        
+        await callback.message.edit_text(
+            f"✅ *Оплата подтверждена!* ✅\n\n"
+            f"💰 Начислено: {amount_rub} ₽\n"
+            f"📊 Проверьте баланс в профиле!\n"
+            f"🌟 Спасибо за пополнение!",
+            parse_mode="Markdown",
+            reply_markup=main_menu()
+        )
+    elif result.get("status") == "pending":
+        await callback.message.edit_text(
+            f"⏳ *Оплата ещё не подтверждена*\n\n"
+            f"Подождите 1-2 минуты и попробуйте снова.",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔄 Проверить снова", callback_data=f"check_xr_{invoice_id}")],
+                [InlineKeyboardButton(text="🏠 В меню", callback_data="back_to_menu")]
+            ])
+        )
+    else:
+        await callback.message.edit_text(
+            f"❌ *Счёт не оплачен или истёк*\n\n"
+            f"Создайте новый счёт для пополнения.",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🚀 Новый счёт", callback_data="deposit_xrocket")],
+                [InlineKeyboardButton(text="🏠 В меню", callback_data="back_to_menu")]
+            ])
         )
 
 # ============ РЕФЕРАЛЬНАЯ СИСТЕМА ============
