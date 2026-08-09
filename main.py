@@ -10,7 +10,7 @@ import asyncio
 import random
 import string
 from datetime import datetime
-from flask import Flask, request
+from flask import Flask, request, jsonify
 import threading
 import logging
 import json
@@ -29,22 +29,36 @@ ADMIN_ID = 8901845559
 CRYPTOBOT_TOKEN = "620220:AAdMBwWMpRXLqndrEHYTeV3lt0KiphM7A7u"
 XROCKET_API_KEY = "64acc4de748ed47a541bb3c47"
 
-# ============ FSM ДЛЯ ОЖИДАНИЯ ВВОДА СУММЫ ============
+# ============ FSM ============
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
 class PaymentStates(StatesGroup):
     waiting_for_custom_amount = State()
 
-# ============ FLASK ДЛЯ RENDER И WEBHOOKOV ============
+# ============ FLASK ДЛЯ RENDER ============
 app = Flask(__name__)
 
-import json
-from flask import request
+@app.route('/')
+def health():
+    return "🤖 OksiShop Bot is running!"
+
+@app.route('/ping')
+def ping():
+    return "pong", 200
+
+@app.route('/health')
+def health_check():
+    return "OK", 200
 
 # ============ WEBHOOK ДЛЯ CRYPTOBOT ============
-@app.route('/crypto_webhook', methods=['POST'])
+@app.route('/crypto_webhook', methods=['POST', 'GET'])
 async def crypto_webhook():
+    # Для GET-запросов (проверка в браузере)
+    if request.method == 'GET':
+        return "Webhook is active", 200
+    
+    # Для POST-запросов от CryptoBot
     try:
         raw_data = await request.get_data()
         data = json.loads(raw_data)
@@ -88,65 +102,23 @@ async def crypto_webhook():
         logging.error(f"CryptoBot webhook error: {e}")
         return "Error", 500
 
-# ============ WEBHOOK ДЛЯ CRYPTOBOT ============
-@app.route('/crypto_webhook', methods=['POST'])
-async def crypto_webhook():
-    try:
-        raw_data = await request.get_data()
-        data = json.loads(raw_data)
-        
-        if data.get('update_type') == 'invoice_paid':
-            payload = data.get('payload', {})
-            user_id_str = payload.get('payload', '')
-            
-            if user_id_str.startswith('user_'):
-                user_id = int(user_id_str.split('_')[1])
-            else:
-                return "Invalid payload", 400
-            
-            amount_usd = float(payload.get('amount', 0))
-            amount_rub = int(amount_usd * 100)
-            
-            db = get_db()
-            cursor = db.cursor()
-            cursor.execute("UPDATE users SET balance = balance + ? WHERE id = ?", (amount_rub, user_id))
-            cursor.execute("UPDATE pending_payments SET status = 'paid' WHERE invoice_id = ?", 
-                          (payload.get('invoice_id'),))
-            db.commit()
-            db.close()
-            
-            try:
-                await bot.send_message(
-                    user_id,
-                    f"✅ *Оплата подтверждена!* ✅\n\n"
-                    f"💰 Начислено: {amount_rub} ₽\n"
-                    f"🌟 Спасибо за пополнение!",
-                    parse_mode="Markdown"
-                )
-            except:
-                pass
-            
-            logging.info(f"✅ CryptoBot оплата: user_id={user_id}, amount={amount_rub} ₽")
-            return "OK", 200
-        return "Ignored", 200
-    except Exception as e:
-        logging.error(f"CryptoBot webhook error: {e}")
-        return "Error", 500
-
 # ============ WEBHOOK ДЛЯ XROCKET ============
-@app.route('/xrocket_webhook', methods=['POST'])
+@app.route('/xrocket_webhook', methods=['POST', 'GET'])
 async def xrocket_webhook():
+    # Для GET-запросов (проверка в браузере)
+    if request.method == 'GET':
+        return "xRocket Webhook is active", 200
+    
+    # Для POST-запросов от xRocket
     try:
         raw_data = await request.get_data()
         data = json.loads(raw_data)
+        logging.info(f"Получен вебхук от xRocket: {data}")
         
-        # xRocket присылает данные в формате:
-        # {"status": "success", "data": {"invoiceId": "...", "status": "paid", ...}}
         if data.get('status') == 'success':
             invoice_data = data.get('data', {})
             invoice_id = invoice_data.get('invoiceId')
             
-            # Ищем пользователя по invoice_id в нашей таблице
             db = get_db()
             cursor = db.cursor()
             cursor.execute("SELECT user_id, amount FROM pending_payments WHERE invoice_id = ? AND system = 'xrocket'", 
@@ -157,7 +129,6 @@ async def xrocket_webhook():
                 user_id, amount_usd = result
                 amount_rub = int(amount_usd * 100)
                 
-                # Начисляем баланс
                 cursor.execute("UPDATE users SET balance = balance + ? WHERE id = ?", (amount_rub, user_id))
                 cursor.execute("UPDATE pending_payments SET status = 'paid' WHERE invoice_id = ?", (invoice_id,))
                 db.commit()
@@ -178,7 +149,7 @@ async def xrocket_webhook():
                 return "OK", 200
             else:
                 db.close()
-                logging.warning(f"xRocket: invoice {invoice_id} not found in pending_payments")
+                logging.warning(f"xRocket: invoice {invoice_id} not found")
                 return "Invoice not found", 404
         return "Ignored", 200
     except Exception as e:
@@ -964,7 +935,6 @@ async def process_custom_cryptobot_amount(message: Message, state: FSMContext):
     
     await state.clear()
     
-    # Конвертируем рубли в USD (1 USD ≈ 100 ₽)
     amount_usd = amount_rub / 100
     
     result = await create_cryptobot_invoice(user_id, amount_usd)
@@ -1616,7 +1586,6 @@ async def main():
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    # Запускаем Flask в фоновом потоке для Render
     port = int(os.environ.get("PORT", 5000))
     threading.Thread(
         target=lambda: app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False),
@@ -1624,5 +1593,4 @@ if __name__ == "__main__":
     ).start()
     print(f"✅ Flask сервер запущен на порту {port}")
     
-    # Запускаем бота
     asyncio.run(main())
