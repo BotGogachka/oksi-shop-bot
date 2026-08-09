@@ -22,9 +22,6 @@ ADMIN_ID = 8901845559
 CRYPTOBOT_TOKEN = "620220:AAdMBwWMpRXLqndrEHYTeV3lt0KiphM7A7u"
 XROCKET_API_KEY = "64acc4de748ed47a541bb3c47"
 
-# IP-адрес для CryptoBot (исправляет ошибку Name or service not known)
-CRYPTOBOT_IP = "10.255.255.1"
-
 # ============ FLASK ============
 app = Flask(__name__)
 
@@ -122,7 +119,8 @@ async def apply_referral(new_user_id, ref_code):
 # ============ КРИПТОПЛАТЕЖИ (ИСПРАВЛЕННЫЕ) ============
 async def create_cryptobot_invoice(user_id, amount_usd):
     try:
-        url = f"https://{CRYPTOBOT_IP}/v1/invoice/create"
+        # ПРАВИЛЬНЫЙ ХОСТ CryptoBot
+        url = "https://pay.crypt.bot/v1/invoice/create"
         payload = {
             "currency_type": "fiat",
             "fiat": "USD",
@@ -137,8 +135,9 @@ async def create_cryptobot_invoice(user_id, amount_usd):
         }
         
         async with aiohttp.ClientSession() as session:
-            async with session.post(url, headers=headers, json=payload, ssl=False) as resp:
+            async with session.post(url, headers=headers, json=payload) as resp:
                 data = await resp.json()
+                logging.info(f"CryptoBot create response: {data}")
                 if data.get("status") == "success":
                     invoice = data.get("result")
                     return {
@@ -155,14 +154,14 @@ async def create_cryptobot_invoice(user_id, amount_usd):
 
 async def check_cryptobot_payment(invoice_id):
     try:
-        url = f"https://{CRYPTOBOT_IP}/v1/invoice/get?invoice_id={invoice_id}"
+        url = f"https://pay.crypt.bot/v1/invoice/get?invoice_id={invoice_id}"
         headers = {
             "Authorization": f"Bearer {CRYPTOBOT_TOKEN}",
             "Content-Type": "application/json"
         }
         
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers, ssl=False) as resp:
+            async with session.get(url, headers=headers) as resp:
                 data = await resp.json()
                 if data.get("status") == "success":
                     invoice = data.get("result")
@@ -187,10 +186,8 @@ async def check_cryptobot_payment(invoice_id):
 # ============ XROCKET (ИСПРАВЛЕННЫЙ) ============
 async def create_xrocket_invoice(user_id, amount_usd):
     try:
-        # Конвертируем USD в TON (1 TON ≈ 5 USD)
         amount_ton = amount_usd / 5.0
         
-        # ПРАВИЛЬНЫЙ URL И ФОРМАТ ДЛЯ XROCKET
         url = "https://pay.xrocket.tg/invoice"
         headers = {
             "Rocket-Pay-Key": XROCKET_API_KEY,
