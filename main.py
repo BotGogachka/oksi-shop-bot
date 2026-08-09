@@ -19,7 +19,7 @@ logging.basicConfig(level=logging.INFO)
 # ============ ПЕРЕМЕННЫЕ ============
 BOT_TOKEN = "8909837555:AAGZOkg1i3_QoWdpq7PpGu5gJb8-KwIf7WI"
 ADMIN_ID = 8901845559
-CRYPTOBOT_TOKEN = "620260:AAPBw2V0DulWNwGOmKInLH926esMEySWgqa"  # НОВЫЙ ТОКЕН
+CRYPTOBOT_TOKEN = "620260:AAPBw2V0DulWNwGOmKInLH926esMEySWgqa"
 XROCKET_API_KEY = "64acc4de748ed47a541bb3c47"
 
 # ============ FLASK ============
@@ -116,10 +116,9 @@ async def apply_referral(new_user_id, ref_code):
     db.close()
     return False, 0
 
-# ============ КРИПТОПЛАТЕЖИ (ИСПРАВЛЕННЫЕ) ============
+# ============ CRYPTOBOT ============
 async def create_cryptobot_invoice(user_id, amount_usd):
     try:
-        # ПРАВИЛЬНЫЙ URL ИЗ ДОКУМЕНТАЦИИ @CryptoBot
         url = "https://pay.crypt.bot/api/createInvoice"
         payload = {
             "currency_type": "fiat",
@@ -165,8 +164,14 @@ async def check_cryptobot_payment(invoice_id):
         
         async with aiohttp.ClientSession() as session:
             async with session.get(url, headers=headers, params=params) as resp:
-                data = await resp.json()
-                logging.info(f"CryptoBot check response: {data}")
+                text = await resp.text()
+                logging.info(f"CryptoBot check response: {text}")
+                
+                try:
+                    data = json.loads(text)
+                except json.JSONDecodeError:
+                    return {"success": False, "error": f"Ответ не JSON: {text[:100]}"}
+                
                 if data.get("ok") and data.get("result"):
                     invoices = data.get("result", [])
                     for invoice in invoices:
@@ -550,6 +555,7 @@ async def show_profile(callback: CallbackQuery):
         pass
     
     user_id = callback.from_user.id
+    is_admin = (user_id == ADMIN_ID)
     username = f"@{callback.from_user.username}" if callback.from_user.username else "не указан"
     
     db = get_db()
@@ -613,11 +619,19 @@ async def show_profile(callback: CallbackQuery):
 📩 По вопросам: @YoungTrappa8122
 """
     
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+    keyboard_buttons = [
         [InlineKeyboardButton(text="💰 Пополнить баланс", callback_data="deposit")],
         [InlineKeyboardButton(text="📱 Мои покупки", callback_data="my_accounts")],
-        [InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")]
-    ])
+    ]
+    
+    if is_admin:
+        keyboard_buttons.append(
+            [InlineKeyboardButton(text="👑 Выдать баланс", callback_data="admin_add_balance")]
+        )
+    
+    keyboard_buttons.append([InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")])
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
     
     await callback.message.delete()
     await callback.message.answer_photo(
@@ -625,6 +639,23 @@ async def show_profile(callback: CallbackQuery):
         caption=caption,
         parse_mode="Markdown",
         reply_markup=keyboard
+    )
+
+# ============ АДМИН: ВЫДАТЬ БАЛАНС ============
+@dp.callback_query(lambda c: c.data == "admin_add_balance")
+async def admin_add_balance_menu(callback: CallbackQuery):
+    if callback.from_user.id != ADMIN_ID:
+        await callback.answer("⛔ Доступ запрещен", show_alert=True)
+        return
+    
+    await callback.answer()
+    await callback.message.answer(
+        "👑 *Выдача баланса*\n\n"
+        "Напишите сумму, которую хотите выдать:\n"
+        "`/add @username 100` — по юзернейму\n"
+        "`/add 123456789 100` — по ID\n\n"
+        "Пример: `/add @YoungTrappa8122 100`",
+        parse_mode="Markdown"
     )
 
 # ============ МОИ ПОКУПКИ ============
@@ -1061,28 +1092,78 @@ async def back_to_menu(callback: CallbackQuery):
         reply_markup=main_menu()
     )
 
+# ============ АДМИН: ПОПОЛНЕНИЕ БАЛАНСА ============
 @dp.message(Command("add"))
 async def add_balance(message: Message):
+    # Проверяем, что это админ
     if message.from_user.id != ADMIN_ID:
         await message.answer("⛔ Доступ запрещен")
         return
     
     try:
         parts = message.text.split()
-        user_id = int(parts[1])
+        if len(parts) < 3:
+            await message.answer(
+                "❌ *Неверный формат!*\n\n"
+                "Используйте:\n"
+                "`/add [user_id] [сумма]` — по ID\n"
+                "`/add @username [сумма]` — по юзернейму\n\n"
+                "Пример: `/add 123456789 100`",
+                parse_mode="Markdown"
+            )
+            return
+        
+        target = parts[1]
         amount = int(parts[2])
-    except:
-        await message.answer("❌ Формат: /add [user_id] [сумма]")
-        return
-    
-    db = get_db()
-    cursor = db.cursor()
-    cursor.execute("UPDATE users SET balance = balance + ? WHERE id = ?", (amount, user_id))
-    db.commit()
-    db.close()
-    
-    await message.answer(f"✅ Баланс пользователя {user_id} пополнен на {amount} ₽")
+        
+        if amount <= 0:
+            await message.answer("❌ Сумма должна быть больше 0!")
+            return
+        
+        db = get_db()
+        cursor = db.cursor()
+        
+        if target.startswith('@'):
+            username = target[1:]
+            cursor.execute("SELECT id FROM users WHERE username = ?", (username,))
+            result = cursor.fetchone()
+            if not result:
+                await message.answer(f"❌ Пользователь {target} не найден в базе!")
+                db.close()
+                return
+            user_id = result[0]
+        else:
+            user_id = int(target)
+            cursor.execute("SELECT id FROM users WHERE id = ?", (user_id,))
+            if not cursor.fetchone():
+                await message.answer(f"❌ Пользователь с ID {user_id} не найден!")
+                db.close()
+                return
+        
+        cursor.execute("UPDATE users SET balance = balance + ? WHERE id = ?", (amount, user_id))
+        db.commit()
+        db.close()
+        
+        await message.answer(f"✅ Баланс пользователя {target} пополнен на {amount} ₽")
+        
+        try:
+            await bot.send_message(
+                user_id,
+                f"💰 *Баланс пополнен!* 💰\n\n"
+                f"✅ Сумма: +{amount} ₽\n"
+                f"📊 Проверьте баланс в профиле!\n"
+                f"🛒 Приятных покупок! 🌟",
+                parse_mode="Markdown"
+            )
+        except:
+            pass
+            
+    except ValueError:
+        await message.answer("❌ Сумма должна быть числом!")
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {str(e)}")
 
+# ============ ПОЛУЧИТЬ FILE_ID ============
 @dp.message(Command("getid"))
 async def get_file_id(message: Message):
     if message.from_user.id != ADMIN_ID:
