@@ -22,7 +22,7 @@ ADMIN_ID = 8901845559
 CRYPTOBOT_TOKEN = "620260:AAPBw2V0DulWNwGOmKInLH926esMEySWgqa"
 XROCKET_API_KEY = "64acc4de748ed47a541bb3c47"
 
-# ============ FLASK ============
+# ============ FLASK ДЛЯ WEBHOOK ============
 app = Flask(__name__)
 
 @app.route('/')
@@ -33,7 +33,46 @@ def health():
 def crypto_webhook():
     if request.method == 'GET':
         return "CryptoBot webhook is active", 200
-    return "OK", 200
+    
+    try:
+        data = request.get_json()
+        logging.info(f"📩 Получен вебхук: {data}")
+        
+        if data and data.get('update_type') == 'invoice_paid':
+            payload = data.get('payload', {})
+            user_id_str = payload.get('payload', '')
+            if user_id_str.startswith('user_'):
+                user_id = int(user_id_str.split('_')[1])
+                amount_usd = float(payload.get('amount', 0))
+                amount_rub = int(amount_usd * 100)
+                
+                db = get_db()
+                cursor = db.cursor()
+                cursor.execute("UPDATE users SET balance = balance + ? WHERE id = ?", (amount_rub, user_id))
+                db.commit()
+                db.close()
+                
+                logging.info(f"✅ Начислено {amount_rub} ₽ пользователю {user_id}")
+                
+                # Уведомляем пользователя
+                try:
+                    bot.send_message(
+                        user_id,
+                        f"✅ *Оплата подтверждена!* ✅\n\n"
+                        f"💰 Начислено: {amount_rub} ₽\n"
+                        f"📊 Проверьте баланс в профиле!\n"
+                        f"🌟 Спасибо за пополнение!",
+                        parse_mode="Markdown"
+                    )
+                except:
+                    pass
+                
+                return "OK", 200
+        
+        return "OK", 200
+    except Exception as e:
+        logging.error(f"CryptoBot webhook error: {e}")
+        return "Error", 500
 
 @app.route('/xrocket_webhook', methods=['GET', 'POST'])
 def xrocket_webhook():
@@ -149,43 +188,6 @@ async def create_cryptobot_invoice(user_id, amount_usd):
                     return {"success": False, "error": data.get("error", "Unknown error")}
     except Exception as e:
         logging.error(f"CryptoBot error: {e}")
-        return {"success": False, "error": str(e)}
-
-async def check_cryptobot_payment(invoice_id):
-    try:
-        url = "https://pay.crypt.bot/api/getInvoices"
-        params = {
-            "invoice_ids": str(invoice_id)
-        }
-        headers = {
-            "Crypto-Pay-API-Token": CRYPTOBOT_TOKEN,
-            "Content-Type": "application/json"
-        }
-        
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers, params=params) as resp:
-                text = await resp.text()
-                logging.info(f"CryptoBot check response: {text[:200]}")
-                
-                try:
-                    data = json.loads(text)
-                except json.JSONDecodeError:
-                    return {"success": False, "error": f"Ответ не JSON: {text[:100]}"}
-                
-                if data.get("ok") and data.get("result"):
-                    invoices = data.get("result", [])
-                    for invoice in invoices:
-                        if invoice.get("status") == "paid":
-                            return {
-                                "success": True,
-                                "paid": True,
-                                "amount": float(invoice.get("amount"))
-                            }
-                    return {"success": True, "paid": False, "status": "pending"}
-                else:
-                    return {"success": False, "error": data.get("error", "Unknown error")}
-    except Exception as e:
-        logging.error(f"CryptoBot check error: {e}")
         return {"success": False, "error": str(e)}
 
 # ============ XROCKET ============
@@ -799,67 +801,19 @@ async def process_cryptobot_amount(callback: CallbackQuery):
         )
         return
     
+    # ОТПРАВЛЯЕМ ССЫЛКУ НА ОПЛАТУ, УБИРАЕМ КНОПКУ ПРОВЕРКИ
     await callback.message.edit_text(
         f"✅ *Счёт создан!* ✅\n\n"
         f"💰 Сумма: {amount_rub} ₽\n"
         f"🔗 *Ссылка для оплаты:*\n"
         f"{result['pay_url']}\n\n"
-        f"📌 После оплаты нажмите «Проверить оплату»",
+        f"📌 *Баланс начислится автоматически* после оплаты!\n"
+        f"⏳ Обычно это занимает 5-10 секунд.",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Проверить оплату", callback_data=f"check_cb_{result['invoice_id']}")],
             [InlineKeyboardButton(text="🏠 В меню", callback_data="back_to_menu")]
         ])
     )
-
-@dp.callback_query(lambda c: c.data and c.data.startswith("check_cb_"))
-async def check_cryptobot_payment_handler(callback: CallbackQuery):
-    try:
-        await callback.answer()
-    except:
-        pass
-    
-    invoice_id = callback.data.split("_")[2]
-    user_id = callback.from_user.id
-    
-    result = await check_cryptobot_payment(invoice_id)
-    
-    if not result["success"]:
-        await callback.message.edit_text(
-            f"❌ Ошибка проверки: {result['error']}",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="🔄 Попробовать снова", callback_data=f"check_cb_{invoice_id}")],
-                [InlineKeyboardButton(text="🏠 В меню", callback_data="back_to_menu")]
-            ])
-        )
-        return
-    
-    if result["paid"]:
-        db = get_db()
-        cursor = db.cursor()
-        amount_rub = int(result["amount"] * 100)
-        cursor.execute("UPDATE users SET balance = balance + ? WHERE id = ?", (amount_rub, user_id))
-        db.commit()
-        db.close()
-        
-        await callback.message.edit_text(
-            f"✅ *Оплата подтверждена!* ✅\n\n"
-            f"💰 Начислено: {amount_rub} ₽\n"
-            f"📊 Проверьте баланс в профиле!\n"
-            f"🌟 Спасибо за пополнение!",
-            parse_mode="Markdown",
-            reply_markup=main_menu()
-        )
-    else:
-        await callback.message.edit_text(
-            f"⏳ *Оплата ещё не подтверждена*\n\n"
-            f"Подождите 1-2 минуты и попробуйте снова.",
-            parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="🔄 Проверить снова", callback_data=f"check_cb_{invoice_id}")],
-                [InlineKeyboardButton(text="🏠 В меню", callback_data="back_to_menu")]
-            ])
-        )
 
 # ============ XROCKET ============
 @dp.callback_query(lambda c: c.data == "deposit_xrocket")
