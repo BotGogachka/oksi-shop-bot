@@ -19,7 +19,7 @@ logging.basicConfig(level=logging.INFO)
 # ============ ПЕРЕМЕННЫЕ ============
 BOT_TOKEN = "8909837555:AAGZOkg1i3_QoWdpq7PpGu5gJb8-KwIf7WI"
 ADMIN_ID = 8901845559
-CRYPTOBOT_TOKEN = "620220:A3OkhMfOibpiiWmyYV1194JcNlCwVpkX6p"  # ТОЧНО СО СКРИНШОТА
+CRYPTOBOT_TOKEN = "620220:AA3OkhMfOibpiiWmyYV1194JcNlCwVpkX6p"  # ОСНОВНОЙ ТОКЕН @CryptoBot
 XROCKET_API_KEY = "64acc4de748ed47a541bb3c47"
 
 # ============ FLASK ДЛЯ WEBHOOKOV ============
@@ -33,7 +33,28 @@ def health():
 def crypto_webhook():
     if request.method == 'GET':
         return "CryptoBot webhook is active", 200
-    return "OK", 200
+    
+    try:
+        data = request.get_json()
+        logging.info(f"📩 CryptoBot webhook: {data}")
+        if data and data.get('update_type') == 'invoice_paid':
+            payload = data.get('payload', {})
+            user_id_str = payload.get('payload', '')
+            user_id = int(user_id_str.split('_')[1]) if user_id_str.startswith('user_') else None
+            if user_id:
+                amount_usd = float(payload.get('amount', 0))
+                amount_rub = int(amount_usd * 100)
+                db = get_db()
+                cursor = db.cursor()
+                cursor.execute("UPDATE users SET balance = balance + ? WHERE id = ?", (amount_rub, user_id))
+                db.commit()
+                db.close()
+                logging.info(f"✅ Начислено {amount_rub} ₽ пользователю {user_id}")
+                return "OK", 200
+        return "OK", 200
+    except Exception as e:
+        logging.error(f"CryptoBot webhook error: {e}")
+        return "Error", 500
 
 @app.route('/xrocket_webhook', methods=['GET', 'POST'])
 def xrocket_webhook():
@@ -116,10 +137,11 @@ async def apply_referral(new_user_id, ref_code):
     db.close()
     return False, 0
 
-# ============ КРИПТОПЛАТЕЖИ ============
+# ============ КРИПТОПЛАТЕЖИ (ПРАВИЛЬНЫЙ API) ============
 async def create_cryptobot_invoice(user_id, amount_usd):
     try:
-        url = "https://pay.crypt.bot/v1/invoice/create"
+        # ПРАВИЛЬНЫЙ URL ИЗ ДОКУМЕНТАЦИИ @CryptoBot
+        url = "https://pay.crypt.bot/api/createInvoice"
         payload = {
             "currency_type": "fiat",
             "fiat": "USD",
@@ -129,7 +151,7 @@ async def create_cryptobot_invoice(user_id, amount_usd):
             "expires_in": 3600
         }
         headers = {
-            "Authorization": f"Bearer {CRYPTOBOT_TOKEN}",
+            "Crypto-Pay-API-Token": CRYPTOBOT_TOKEN,
             "Content-Type": "application/json"
         }
         
@@ -137,7 +159,7 @@ async def create_cryptobot_invoice(user_id, amount_usd):
             async with session.post(url, headers=headers, json=payload) as resp:
                 data = await resp.json()
                 logging.info(f"CryptoBot create response: {data}")
-                if data.get("status") == "success":
+                if data.get("ok") and data.get("result"):
                     invoice = data.get("result")
                     return {
                         "success": True,
@@ -153,29 +175,29 @@ async def create_cryptobot_invoice(user_id, amount_usd):
 
 async def check_cryptobot_payment(invoice_id):
     try:
-        url = f"https://pay.crypt.bot/v1/invoice/get?invoice_id={invoice_id}"
+        url = f"https://pay.crypt.bot/api/getInvoices"
+        payload = {
+            "invoice_ids": str(invoice_id)
+        }
         headers = {
-            "Authorization": f"Bearer {CRYPTOBOT_TOKEN}",
+            "Crypto-Pay-API-Token": CRYPTOBOT_TOKEN,
             "Content-Type": "application/json"
         }
         
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers) as resp:
+            async with session.get(url, headers=headers, params=payload) as resp:
                 data = await resp.json()
-                if data.get("status") == "success":
-                    invoice = data.get("result")
-                    if invoice.get("status") == "paid":
-                        return {
-                            "success": True, 
-                            "paid": True, 
-                            "amount": float(invoice.get("amount"))
-                        }
-                    else:
-                        return {
-                            "success": True, 
-                            "paid": False, 
-                            "status": invoice.get("status")
-                        }
+                logging.info(f"CryptoBot check response: {data}")
+                if data.get("ok") and data.get("result"):
+                    invoices = data.get("result", [])
+                    for invoice in invoices:
+                        if invoice.get("status") == "paid":
+                            return {
+                                "success": True, 
+                                "paid": True, 
+                                "amount": float(invoice.get("amount"))
+                            }
+                    return {"success": True, "paid": False, "status": "pending"}
                 else:
                     return {"success": False, "error": data.get("error", "Unknown error")}
     except Exception as e:
@@ -187,7 +209,7 @@ async def create_xrocket_invoice(user_id, amount_usd):
     try:
         amount_ton = amount_usd / 5.0
         
-        url = "https://pay.xrocket.tg/invoice"
+        url = "https://pay.xrocket.tg/api/v1/invoices"
         headers = {
             "Rocket-Pay-Key": XROCKET_API_KEY,
             "Content-Type": "application/json"
