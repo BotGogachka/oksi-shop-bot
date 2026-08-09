@@ -23,7 +23,7 @@ CRYPTOBOT_TOKEN = "620220:AAdMBwWMpRXLqndrEHYTeV3lt0KiphM7A7u"
 XROCKET_API_KEY = "64acc4de748ed47a541bb3c47"
 
 # IP-адрес для CryptoBot (исправляет ошибку Name or service not known)
-CRYPTOBOT_IP = "10.255.255.1"  # Если не работает, замени на актуальный IP
+CRYPTOBOT_IP = "10.255.255.1"
 
 # ============ FLASK ============
 app = Flask(__name__)
@@ -122,7 +122,6 @@ async def apply_referral(new_user_id, ref_code):
 # ============ КРИПТОПЛАТЕЖИ (ИСПРАВЛЕННЫЕ) ============
 async def create_cryptobot_invoice(user_id, amount_usd):
     try:
-        # ИСПОЛЬЗУЕМ IP-АДРЕС ВМЕСТО ДОМЕНА
         url = f"https://{CRYPTOBOT_IP}/v1/invoice/create"
         payload = {
             "currency_type": "fiat",
@@ -138,7 +137,6 @@ async def create_cryptobot_invoice(user_id, amount_usd):
         }
         
         async with aiohttp.ClientSession() as session:
-            # SSL ОТКЛЮЧЕН
             async with session.post(url, headers=headers, json=payload, ssl=False) as resp:
                 data = await resp.json()
                 if data.get("status") == "success":
@@ -157,7 +155,6 @@ async def create_cryptobot_invoice(user_id, amount_usd):
 
 async def check_cryptobot_payment(invoice_id):
     try:
-        # ИСПОЛЬЗУЕМ IP-АДРЕС ВМЕСТО ДОМЕНА
         url = f"https://{CRYPTOBOT_IP}/v1/invoice/get?invoice_id={invoice_id}"
         headers = {
             "Authorization": f"Bearer {CRYPTOBOT_TOKEN}",
@@ -165,7 +162,6 @@ async def check_cryptobot_payment(invoice_id):
         }
         
         async with aiohttp.ClientSession() as session:
-            # SSL ОТКЛЮЧЕН
             async with session.get(url, headers=headers, ssl=False) as resp:
                 data = await resp.json()
                 if data.get("status") == "success":
@@ -188,10 +184,13 @@ async def check_cryptobot_payment(invoice_id):
         logging.error(f"CryptoBot check error: {e}")
         return {"success": False, "error": str(e)}
 
+# ============ XROCKET (ИСПРАВЛЕННЫЙ) ============
 async def create_xrocket_invoice(user_id, amount_usd):
     try:
+        # Конвертируем USD в TON (1 TON ≈ 5 USD)
         amount_ton = amount_usd / 5.0
-        # ПРАВИЛЬНЫЙ URL ДЛЯ XROCKET
+        
+        # ПРАВИЛЬНЫЙ URL И ФОРМАТ ДЛЯ XROCKET
         url = "https://pay.xrocket.tg/invoice"
         headers = {
             "Rocket-Pay-Key": XROCKET_API_KEY,
@@ -199,19 +198,24 @@ async def create_xrocket_invoice(user_id, amount_usd):
         }
         payload = {
             "currency": "TON",
-            "amount": str(amount_ton),
-            "description": f"Пополнение баланса OksiShop для пользователя {user_id}",
+            "amount": str(round(amount_ton, 2)),
+            "description": f"Пополнение баланса OksiShop",
             "expiresIn": 3600
         }
+        
+        logging.info(f"📤 xRocket запрос: {payload}")
         
         async with aiohttp.ClientSession() as session:
             async with session.post(url, headers=headers, json=payload) as resp:
                 data = await resp.json()
+                logging.info(f"📥 xRocket ответ: {data}")
+                
                 if data.get("status") == "success":
+                    invoice = data.get("data", {})
                     return {
                         "success": True,
-                        "invoice_id": data.get("invoiceId"),
-                        "pay_url": data.get("link"),
+                        "invoice_id": invoice.get("invoiceId"),
+                        "pay_url": invoice.get("link"),
                         "amount": amount_usd
                     }
                 else:
@@ -718,7 +722,7 @@ async def show_deposit(callback: CallbackQuery):
         reply_markup=keyboard
     )
 
-# ============ CRYPTOBOT ПОПОЛНЕНИЕ ============
+# ============ CRYPTOBOT ============
 @dp.callback_query(lambda c: c.data == "deposit_cryptobot")
 async def deposit_cryptobot(callback: CallbackQuery):
     try:
@@ -743,7 +747,6 @@ async def deposit_cryptobot(callback: CallbackQuery):
         reply_markup=keyboard
     )
 
-# ============ ОБРАБОТКА ВЫБОРА СУММЫ CRYPTOBOT ============
 @dp.callback_query(lambda c: c.data and c.data.startswith("cb_amount_"))
 async def process_cryptobot_amount(callback: CallbackQuery):
     try:
@@ -781,7 +784,6 @@ async def process_cryptobot_amount(callback: CallbackQuery):
         ])
     )
 
-# ============ ПРОВЕРКА ОПЛАТЫ CRYPTOBOT ============
 @dp.callback_query(lambda c: c.data and c.data.startswith("check_cb_"))
 async def check_cryptobot_payment_handler(callback: CallbackQuery):
     try:
@@ -831,7 +833,7 @@ async def check_cryptobot_payment_handler(callback: CallbackQuery):
             ])
         )
 
-# ============ XROCKET ПОПОЛНЕНИЕ ============
+# ============ XROCKET ============
 @dp.callback_query(lambda c: c.data == "deposit_xrocket")
 async def deposit_xrocket(callback: CallbackQuery):
     try:
@@ -857,7 +859,6 @@ async def deposit_xrocket(callback: CallbackQuery):
         reply_markup=keyboard
     )
 
-# ============ ОБРАБОТКА ВЫБОРА СУММЫ XROCKET ============
 @dp.callback_query(lambda c: c.data and c.data.startswith("xr_amount_"))
 async def process_xrocket_amount(callback: CallbackQuery):
     try:
@@ -895,7 +896,6 @@ async def process_xrocket_amount(callback: CallbackQuery):
         ])
     )
 
-# ============ ПРОВЕРКА ОПЛАТЫ XROCKET ============
 @dp.callback_query(lambda c: c.data and c.data.startswith("check_xr_"))
 async def check_xrocket_payment_handler(callback: CallbackQuery):
     try:
@@ -903,6 +903,7 @@ async def check_xrocket_payment_handler(callback: CallbackQuery):
     except:
         pass
     
+    # Для xRocket пока проверка через админа
     await callback.message.edit_text(
         "⏳ *Проверка оплаты...*\n\n"
         "Функция автоматической проверки для xRocket в разработке.\n"
