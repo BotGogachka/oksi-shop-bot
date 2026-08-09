@@ -17,6 +17,7 @@ import json
 import hashlib
 import hmac
 import aiohttp
+import ssl
 
 # ============ ЛОГИРОВАНИЕ ============
 logging.basicConfig(level=logging.INFO)
@@ -28,6 +29,9 @@ ADMIN_ID = 8901845559
 # ТОКЕНЫ ДЛЯ ПЛАТЕЖЕЙ
 CRYPTOBOT_TOKEN = "620220:AAdMBwWMpRXLqndrEHYTeV3lt0KiphM7A7u"
 XROCKET_API_KEY = "64acc4de748ed47a541bb3c47"
+
+# IP-адрес для CryptoBot (вместо api.cryptobot.ai)
+CRYPTOBOT_IP = "10.255.255.1"
 
 # ============ FSM ============
 storage = MemoryStorage()
@@ -52,17 +56,17 @@ def health_check():
     return "OK", 200
 
 # ============ WEBHOOK ДЛЯ CRYPTOBOT ============
-@app.route('/crypto_webhook', methods=['POST', 'GET'])
+@app.route('/crypto_webhook', methods=['GET', 'POST'])
 async def crypto_webhook():
     # Для GET-запросов (проверка в браузере)
     if request.method == 'GET':
-        return "Webhook is active", 200
+        return "✅ CryptoBot webhook is active! Ready to receive POST requests.", 200
     
     # Для POST-запросов от CryptoBot
     try:
         raw_data = await request.get_data()
         data = json.loads(raw_data)
-        logging.info(f"Получен вебхук от CryptoBot: {data}")
+        logging.info(f"📩 Получен вебхук от CryptoBot: {data}")
         
         if data.get('update_type') == 'invoice_paid':
             payload = data.get('payload', {})
@@ -103,17 +107,17 @@ async def crypto_webhook():
         return "Error", 500
 
 # ============ WEBHOOK ДЛЯ XROCKET ============
-@app.route('/xrocket_webhook', methods=['POST', 'GET'])
+@app.route('/xrocket_webhook', methods=['GET', 'POST'])
 async def xrocket_webhook():
     # Для GET-запросов (проверка в браузере)
     if request.method == 'GET':
-        return "xRocket Webhook is active", 200
+        return "✅ xRocket webhook is active! Ready to receive POST requests.", 200
     
     # Для POST-запросов от xRocket
     try:
         raw_data = await request.get_data()
         data = json.loads(raw_data)
-        logging.info(f"Получен вебхук от xRocket: {data}")
+        logging.info(f"📩 Получен вебхук от xRocket: {data}")
         
         if data.get('status') == 'success':
             invoice_data = data.get('data', {})
@@ -235,7 +239,7 @@ async def apply_referral(new_user_id, ref_code):
 async def create_cryptobot_invoice(user_id, amount_usd):
     """Создает счет в CryptoBot на сумму в USD"""
     try:
-        url = "https://api.cryptobot.ai/v1/invoice/create"
+        url = f"https://{CRYPTOBOT_IP}/v1/invoice/create"
         payload = {
             "currency_type": "fiat",
             "fiat": "USD",
@@ -250,7 +254,7 @@ async def create_cryptobot_invoice(user_id, amount_usd):
         }
         
         async with aiohttp.ClientSession() as session:
-            async with session.post(url, headers=headers, json=payload) as resp:
+            async with session.post(url, headers=headers, json=payload, ssl=False) as resp:
                 data = await resp.json()
                 if data.get("status") == "success":
                     invoice = data.get("result")
@@ -268,14 +272,14 @@ async def create_cryptobot_invoice(user_id, amount_usd):
 
 async def check_cryptobot_payment(invoice_id):
     try:
-        url = f"https://api.cryptobot.ai/v1/invoice/get?invoice_id={invoice_id}"
+        url = f"https://{CRYPTOBOT_IP}/v1/invoice/get?invoice_id={invoice_id}"
         headers = {
             "Authorization": f"Bearer {CRYPTOBOT_TOKEN}",
             "Content-Type": "application/json"
         }
         
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers) as resp:
+            async with session.get(url, headers=headers, ssl=False) as resp:
                 data = await resp.json()
                 if data.get("status") == "success":
                     invoice = data.get("result")
