@@ -42,13 +42,48 @@ app = Flask(__name__)
 import json
 from flask import request
 
+# ============ WEBHOOK ДЛЯ CRYPTOBOT ============
 @app.route('/crypto_webhook', methods=['POST'])
 async def crypto_webhook():
     try:
         raw_data = await request.get_data()
         data = json.loads(raw_data)
         logging.info(f"Получен вебхук от CryptoBot: {data}")
-        return "OK", 200
+        
+        if data.get('update_type') == 'invoice_paid':
+            payload = data.get('payload', {})
+            user_id_str = payload.get('payload', '')
+            
+            if user_id_str.startswith('user_'):
+                user_id = int(user_id_str.split('_')[1])
+            else:
+                return "Invalid payload", 400
+            
+            amount_usd = float(payload.get('amount', 0))
+            amount_rub = int(amount_usd * 100)
+            
+            db = get_db()
+            cursor = db.cursor()
+            cursor.execute("UPDATE users SET balance = balance + ? WHERE id = ?", (amount_rub, user_id))
+            cursor.execute("UPDATE pending_payments SET status = 'paid' WHERE invoice_id = ?", 
+                          (payload.get('invoice_id'),))
+            db.commit()
+            db.close()
+            
+            try:
+                await bot.send_message(
+                    user_id,
+                    f"✅ *Оплата подтверждена!* ✅\n\n"
+                    f"💰 Начислено: {amount_rub} ₽\n"
+                    f"🌟 Спасибо за пополнение!",
+                    parse_mode="Markdown"
+                )
+            except:
+                pass
+            
+            logging.info(f"✅ CryptoBot оплата: user_id={user_id}, amount={amount_rub} ₽")
+            return "OK", 200
+        return "Ignored", 200
     except Exception as e:
         logging.error(f"CryptoBot webhook error: {e}")
         return "Error", 500
