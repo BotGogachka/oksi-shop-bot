@@ -39,17 +39,19 @@ class PaymentStates(StatesGroup):
 # ============ FLASK ДЛЯ RENDER И WEBHOOKOV ============
 app = Flask(__name__)
 
-@app.route('/')
-def health():
-    return "🤖 OksiShop Bot is running!"
+import json
+from flask import request
 
-@app.route('/ping')
-def ping():
-    return "pong", 200
-
-@app.route('/health')
-def health_check():
-    return "OK", 200
+@app.route('/crypto_webhook', methods=['POST'])
+async def crypto_webhook():
+    try:
+        raw_data = await request.get_data()
+        data = json.loads(raw_data)
+        logging.info(f"Получен вебхук от CryptoBot: {data}")
+        return "OK", 200
+    except Exception as e:
+        logging.error(f"CryptoBot webhook error: {e}")
+        return "Error", 500
 
 # ============ WEBHOOK ДЛЯ CRYPTOBOT ============
 @app.route('/crypto_webhook', methods=['POST'])
