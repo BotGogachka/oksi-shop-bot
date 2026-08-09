@@ -1,6 +1,9 @@
 from aiogram import Bot, Dispatcher, types
-from aiogram.filters import Command
+from aiogram.filters import Command, StateFilter
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 import sqlite3
 import os
 import asyncio
@@ -19,13 +22,19 @@ import aiohttp
 logging.basicConfig(level=logging.INFO)
 
 # ============ ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ ============
-# ДЛЯ ЛОКАЛЬНОГО ЗАПУСКА - ТОКЕН ПРЯМО В КОДЕ
 BOT_TOKEN = "8909837555:AAGZOkg1i3_QoWdpq7PpGu5gJb8-KwIf7WI"
 ADMIN_ID = 8901845559
 
 # ТОКЕНЫ ДЛЯ ПЛАТЕЖЕЙ
 CRYPTOBOT_TOKEN = "620220:AAdMBwWMpRXLqndrEHYTeV3lt0KiphM7A7u"
 XROCKET_API_KEY = "64acc4de748ed47a541bb3c47"
+
+# ============ FSM ДЛЯ ОЖИДАНИЯ ВВОДА СУММЫ ============
+storage = MemoryStorage()
+dp = Dispatcher(storage=storage)
+
+class PaymentStates(StatesGroup):
+    waiting_for_custom_amount = State()
 
 # ============ FLASK ДЛЯ RENDER ============
 app = Flask(__name__)
@@ -44,7 +53,6 @@ def health_check():
 
 # ============ БОТ ============
 bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher()
 
 # ============ БАЗА ДАННЫХ ============
 def get_db():
@@ -233,7 +241,7 @@ async def check_xrocket_payment(invoice_id):
                         return {
                             "success": True,
                             "paid": True,
-                            "amount": 50  # фиксированная сумма для примера
+                            "amount": 50
                         }
                     else:
                         return {
@@ -762,18 +770,112 @@ async def deposit_cryptobot(callback: CallbackQuery):
     await callback.message.delete()
     
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💳 5 USD (~500 ₽)", callback_data="cb_amount_5")],
-        [InlineKeyboardButton(text="💳 10 USD (~1000 ₽)", callback_data="cb_amount_10")],
-        [InlineKeyboardButton(text="💳 25 USD (~2500 ₽)", callback_data="cb_amount_25")],
-        [InlineKeyboardButton(text="💳 50 USD (~5000 ₽)", callback_data="cb_amount_50")],
+        [InlineKeyboardButton(text="💰 10 ₽", callback_data="cb_amount_10")],
+        [InlineKeyboardButton(text="💰 50 ₽", callback_data="cb_amount_50")],
+        [InlineKeyboardButton(text="💰 100 ₽", callback_data="cb_amount_100")],
+        [InlineKeyboardButton(text="💰 500 ₽", callback_data="cb_amount_500")],
+        [InlineKeyboardButton(text="✏️ Другая сумма", callback_data="cb_custom")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="deposit")]
     ])
     
     await callback.message.answer(
         "💰 *CryptoBot — выберите сумму пополнения:*\n\n"
+        "Минимальная сумма: 10 ₽\n"
         "Сумма будет конвертирована в криптовалюту по текущему курсу.",
         parse_mode="Markdown",
         reply_markup=keyboard
+    )
+
+# ============ КНОПКА "ДРУГАЯ СУММА" CRYPTOBOT ============
+@dp.callback_query(lambda c: c.data == "cb_custom")
+async def cryptobot_custom_amount(callback: CallbackQuery, state: FSMContext):
+    try:
+        await callback.answer()
+    except:
+        pass
+    
+    await state.set_state(PaymentStates.waiting_for_custom_amount)
+    
+    await callback.message.edit_text(
+        "✏️ *Введите сумму пополнения в рублях:*\n\n"
+        "💰 Минимальная сумма: 10 ₽\n"
+        "📌 Напишите число цифрами (например: 150)",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="deposit_cryptobot")]
+        ])
+    )
+
+# ============ ОБРАБОТКА ВВОДА СВОБОДНОЙ СУММЫ ============
+@dp.message(StateFilter(PaymentStates.waiting_for_custom_amount))
+async def process_custom_cryptobot_amount(message: Message, state: FSMContext):
+    if not message.text.isdigit():
+        await message.answer(
+            "❌ *Пожалуйста, введите число!*\n\n"
+            "Например: 150",
+            parse_mode="Markdown"
+        )
+        return
+    
+    amount_rub = int(message.text)
+    user_id = message.from_user.id
+    
+    if amount_rub < 10:
+        await message.answer(
+            "❌ *Минимальная сумма пополнения — 10 ₽!*\n\n"
+            "Пожалуйста, введите сумму от 10 ₽.",
+            parse_mode="Markdown"
+        )
+        return
+    
+    await state.clear()
+    
+    # Конвертируем рубли в USD (1 USD ≈ 100 ₽)
+    amount_usd = amount_rub / 100
+    
+    result = await create_cryptobot_invoice(user_id, amount_usd)
+    
+    if not result["success"]:
+        await message.answer(
+            f"❌ *Ошибка создания счета:*\n{result['error']}\n\n"
+            "Попробуйте позже.",
+            parse_mode="Markdown"
+        )
+        return
+    
+    db = get_db()
+    cursor = db.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS pending_payments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            invoice_id TEXT,
+            amount REAL,
+            system TEXT,
+            created_at TEXT,
+            status TEXT DEFAULT 'pending'
+        )
+    """)
+    cursor.execute(
+        "INSERT INTO pending_payments (user_id, invoice_id, amount, system, created_at) VALUES (?, ?, ?, ?, ?)",
+        (user_id, result["invoice_id"], amount_usd, "cryptobot", datetime.now().strftime("%d.%m.%Y %H:%M"))
+    )
+    db.commit()
+    db.close()
+    
+    await message.answer(
+        f"✅ *Счёт создан!* ✅\n\n"
+        f"💰 Сумма: {amount_rub} ₽ (~{amount_usd:.2f} USD)\n"
+        f"🆔 ID счёта: `{result['invoice_id']}`\n\n"
+        f"🔗 *Ссылка для оплаты:*\n"
+        f"{result['pay_url']}\n\n"
+        f"📌 После оплаты нажмите «Проверить оплату»\n"
+        f"⏳ Счёт действителен 1 час",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Проверить оплату", callback_data=f"check_cb_{result['invoice_id']}")],
+            [InlineKeyboardButton(text="🏠 В меню", callback_data="back_to_menu")]
+        ])
     )
 
 # ============ ОБРАБОТКА ВЫБОРА СУММЫ CRYPTOBOT ============
@@ -784,7 +886,16 @@ async def process_cryptobot_amount(callback: CallbackQuery):
     except:
         pass
     
-    amount_usd = float(callback.data.split("_")[2])
+    amount_rub = float(callback.data.split("_")[2])
+    
+    if amount_rub < 10:
+        await callback.message.edit_text(
+            "❌ *Минимальная сумма — 10 ₽!*",
+            parse_mode="Markdown"
+        )
+        return
+    
+    amount_usd = amount_rub / 100
     user_id = callback.from_user.id
     
     result = await create_cryptobot_invoice(user_id, amount_usd)
@@ -822,7 +933,7 @@ async def process_cryptobot_amount(callback: CallbackQuery):
     
     await callback.message.edit_text(
         f"✅ *Счёт создан!* ✅\n\n"
-        f"💰 Сумма: {amount_usd} USD (~{amount_usd * 100} ₽)\n"
+        f"💰 Сумма: {amount_rub} ₽ (~{amount_usd:.2f} USD)\n"
         f"🆔 ID счёта: `{result['invoice_id']}`\n\n"
         f"🔗 *Ссылка для оплаты:*\n"
         f"{result['pay_url']}\n\n"
@@ -908,18 +1019,40 @@ async def deposit_xrocket(callback: CallbackQuery):
     await callback.message.delete()
     
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🚀 5 USD (~500 ₽)", callback_data="xr_amount_5")],
-        [InlineKeyboardButton(text="🚀 10 USD (~1000 ₽)", callback_data="xr_amount_10")],
-        [InlineKeyboardButton(text="🚀 25 USD (~2500 ₽)", callback_data="xr_amount_25")],
-        [InlineKeyboardButton(text="🚀 50 USD (~5000 ₽)", callback_data="xr_amount_50")],
+        [InlineKeyboardButton(text="🚀 10 ₽", callback_data="xr_amount_10")],
+        [InlineKeyboardButton(text="🚀 50 ₽", callback_data="xr_amount_50")],
+        [InlineKeyboardButton(text="🚀 100 ₽", callback_data="xr_amount_100")],
+        [InlineKeyboardButton(text="🚀 500 ₽", callback_data="xr_amount_500")],
+        [InlineKeyboardButton(text="✏️ Другая сумма", callback_data="xr_custom")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="deposit")]
     ])
     
     await callback.message.answer(
         "🚀 *xRocket — выберите сумму пополнения:*\n\n"
+        "Минимальная сумма: 10 ₽\n"
         "Оплата в TON по текущему курсу (1 TON ≈ 5 USD).",
         parse_mode="Markdown",
         reply_markup=keyboard
+    )
+
+# ============ КНОПКА "ДРУГАЯ СУММА" XROCKET ============
+@dp.callback_query(lambda c: c.data == "xr_custom")
+async def xrocket_custom_amount(callback: CallbackQuery, state: FSMContext):
+    try:
+        await callback.answer()
+    except:
+        pass
+    
+    await state.set_state(PaymentStates.waiting_for_custom_amount)
+    
+    await callback.message.edit_text(
+        "✏️ *Введите сумму пополнения в рублях:*\n\n"
+        "💰 Минимальная сумма: 10 ₽\n"
+        "📌 Напишите число цифрами (например: 150)",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="deposit_xrocket")]
+        ])
     )
 
 # ============ ОБРАБОТКА ВЫБОРА СУММЫ XROCKET ============
@@ -930,7 +1063,16 @@ async def process_xrocket_amount(callback: CallbackQuery):
     except:
         pass
     
-    amount_usd = float(callback.data.split("_")[2])
+    amount_rub = float(callback.data.split("_")[2])
+    
+    if amount_rub < 10:
+        await callback.message.edit_text(
+            "❌ *Минимальная сумма — 10 ₽!*",
+            parse_mode="Markdown"
+        )
+        return
+    
+    amount_usd = amount_rub / 100
     user_id = callback.from_user.id
     
     result = await create_xrocket_invoice(user_id, amount_usd)
@@ -968,7 +1110,7 @@ async def process_xrocket_amount(callback: CallbackQuery):
     
     await callback.message.edit_text(
         f"✅ *Счёт создан!* ✅\n\n"
-        f"💰 Сумма: {amount_usd} USD (~{amount_usd * 100} ₽)\n"
+        f"💰 Сумма: {amount_rub} ₽ (~{amount_usd:.2f} USD)\n"
         f"🆔 ID счёта: `{result['invoice_id']}`\n\n"
         f"🔗 *Ссылка для оплаты:*\n"
         f"{result['pay_url']}\n\n"
@@ -1007,7 +1149,7 @@ async def check_xrocket_payment_handler(callback: CallbackQuery):
     if result["paid"]:
         db = get_db()
         cursor = db.cursor()
-        amount_rub = 500  # Фиксированная сумма для примера
+        amount_rub = 500
         cursor.execute("UPDATE users SET balance = balance + ? WHERE id = ?", (amount_rub, user_id))
         cursor.execute("UPDATE pending_payments SET status = 'paid' WHERE invoice_id = ?", (invoice_id,))
         db.commit()
