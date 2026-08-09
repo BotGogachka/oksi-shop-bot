@@ -19,10 +19,10 @@ logging.basicConfig(level=logging.INFO)
 # ============ ПЕРЕМЕННЫЕ ============
 BOT_TOKEN = "8909837555:AAGZOkg1i3_QoWdpq7PpGu5gJb8-KwIf7WI"
 ADMIN_ID = 8901845559
-CRYPTOBOT_TOKEN = "620220:AA3OkhMfOibpiiWmyYV1194JcNlCwVpkX6p"  # ОСНОВНОЙ ТОКЕН @CryptoBot
+CRYPTOBOT_TOKEN = "620260:AAPBw2V0DulWNwGOmKInLH926esMEySWgqa"  # НОВЫЙ ТОКЕН
 XROCKET_API_KEY = "64acc4de748ed47a541bb3c47"
 
-# ============ FLASK ДЛЯ WEBHOOKOV ============
+# ============ FLASK ============
 app = Flask(__name__)
 
 @app.route('/')
@@ -33,28 +33,7 @@ def health():
 def crypto_webhook():
     if request.method == 'GET':
         return "CryptoBot webhook is active", 200
-    
-    try:
-        data = request.get_json()
-        logging.info(f"📩 CryptoBot webhook: {data}")
-        if data and data.get('update_type') == 'invoice_paid':
-            payload = data.get('payload', {})
-            user_id_str = payload.get('payload', '')
-            user_id = int(user_id_str.split('_')[1]) if user_id_str.startswith('user_') else None
-            if user_id:
-                amount_usd = float(payload.get('amount', 0))
-                amount_rub = int(amount_usd * 100)
-                db = get_db()
-                cursor = db.cursor()
-                cursor.execute("UPDATE users SET balance = balance + ? WHERE id = ?", (amount_rub, user_id))
-                db.commit()
-                db.close()
-                logging.info(f"✅ Начислено {amount_rub} ₽ пользователю {user_id}")
-                return "OK", 200
-        return "OK", 200
-    except Exception as e:
-        logging.error(f"CryptoBot webhook error: {e}")
-        return "Error", 500
+    return "OK", 200
 
 @app.route('/xrocket_webhook', methods=['GET', 'POST'])
 def xrocket_webhook():
@@ -137,7 +116,7 @@ async def apply_referral(new_user_id, ref_code):
     db.close()
     return False, 0
 
-# ============ КРИПТОПЛАТЕЖИ (ПРАВИЛЬНЫЙ API) ============
+# ============ КРИПТОПЛАТЕЖИ (ИСПРАВЛЕННЫЕ) ============
 async def create_cryptobot_invoice(user_id, amount_usd):
     try:
         # ПРАВИЛЬНЫЙ URL ИЗ ДОКУМЕНТАЦИИ @CryptoBot
@@ -175,8 +154,8 @@ async def create_cryptobot_invoice(user_id, amount_usd):
 
 async def check_cryptobot_payment(invoice_id):
     try:
-        url = f"https://pay.crypt.bot/api/getInvoices"
-        payload = {
+        url = "https://pay.crypt.bot/api/getInvoices"
+        params = {
             "invoice_ids": str(invoice_id)
         }
         headers = {
@@ -185,7 +164,7 @@ async def check_cryptobot_payment(invoice_id):
         }
         
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers, params=payload) as resp:
+            async with session.get(url, headers=headers, params=params) as resp:
                 data = await resp.json()
                 logging.info(f"CryptoBot check response: {data}")
                 if data.get("ok") and data.get("result"):
@@ -193,8 +172,8 @@ async def check_cryptobot_payment(invoice_id):
                     for invoice in invoices:
                         if invoice.get("status") == "paid":
                             return {
-                                "success": True, 
-                                "paid": True, 
+                                "success": True,
+                                "paid": True,
                                 "amount": float(invoice.get("amount"))
                             }
                     return {"success": True, "paid": False, "status": "pending"}
@@ -260,7 +239,7 @@ def back_button():
         [InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")]
     ])
 
-# ============ ОБРАБОТЧИКИ КНОПОК ============
+# ============ СТАРТ ============
 @dp.message(Command("start"))
 async def start(message: Message):
     user_id = message.from_user.id
@@ -332,6 +311,7 @@ async def start(message: Message):
             reply_markup=main_menu()
         )
 
+# ============ ВХОД В МАГАЗИН ============
 @dp.callback_query(lambda c: c.data == "enter_shop")
 async def enter_shop(callback: CallbackQuery):
     try:
@@ -363,6 +343,7 @@ async def enter_shop(callback: CallbackQuery):
         reply_markup=main_menu()
     )
 
+# ============ КАТАЛОГ ============
 @dp.callback_query(lambda c: c.data == "catalog")
 async def show_catalog(callback: CallbackQuery):
     try:
@@ -419,6 +400,7 @@ async def show_catalog(callback: CallbackQuery):
         reply_markup=keyboard
     )
 
+# ============ ПРОСМОТР ТОВАРА ============
 @dp.callback_query(lambda c: c.data and c.data.startswith("view_"))
 async def view_product(callback: CallbackQuery):
     try:
@@ -485,6 +467,7 @@ async def view_product(callback: CallbackQuery):
             reply_markup=keyboard
         )
 
+# ============ ПОКУПКА ============
 @dp.callback_query(lambda c: c.data and c.data.startswith("buy_"))
 async def buy_product(callback: CallbackQuery):
     try:
@@ -558,6 +541,7 @@ async def buy_product(callback: CallbackQuery):
         ])
     )
 
+# ============ ПРОФИЛЬ ============
 @dp.callback_query(lambda c: c.data == "profile")
 async def show_profile(callback: CallbackQuery):
     try:
@@ -643,6 +627,7 @@ async def show_profile(callback: CallbackQuery):
         reply_markup=keyboard
     )
 
+# ============ МОИ ПОКУПКИ ============
 @dp.callback_query(lambda c: c.data == "my_accounts")
 async def show_my_accounts(callback: CallbackQuery):
     try:
@@ -700,6 +685,7 @@ async def show_my_accounts(callback: CallbackQuery):
         reply_markup=keyboard
     )
 
+# ============ ПОПОЛНЕНИЕ БАЛАНСА ============
 @dp.callback_query(lambda c: c.data == "deposit")
 async def show_deposit(callback: CallbackQuery):
     try:
@@ -733,6 +719,7 @@ async def show_deposit(callback: CallbackQuery):
         reply_markup=keyboard
     )
 
+# ============ CRYPTOBOT ============
 @dp.callback_query(lambda c: c.data == "deposit_cryptobot")
 async def deposit_cryptobot(callback: CallbackQuery):
     try:
@@ -843,6 +830,7 @@ async def check_cryptobot_payment_handler(callback: CallbackQuery):
             ])
         )
 
+# ============ XROCKET ============
 @dp.callback_query(lambda c: c.data == "deposit_xrocket")
 async def deposit_xrocket(callback: CallbackQuery):
     try:
@@ -920,6 +908,7 @@ async def check_xrocket_payment_handler(callback: CallbackQuery):
         reply_markup=back_button()
     )
 
+# ============ РЕФЕРАЛЬНАЯ СИСТЕМА ============
 @dp.callback_query(lambda c: c.data == "referral")
 async def show_referral(callback: CallbackQuery):
     try:
@@ -976,6 +965,7 @@ async def show_referral(callback: CallbackQuery):
         reply_markup=keyboard
     )
 
+# ============ КОПИРОВАТЬ РЕФЕРАЛКУ ============
 @dp.callback_query(lambda c: c.data and c.data.startswith("copy_ref_"))
 async def copy_referral(callback: CallbackQuery):
     try:
@@ -995,6 +985,7 @@ async def copy_referral(callback: CallbackQuery):
     )
     await callback.answer("Ссылка отправлена!")
 
+# ============ ТЕХПОДДЕРЖКА ============
 @dp.callback_query(lambda c: c.data == "support")
 async def show_support(callback: CallbackQuery):
     try:
@@ -1023,6 +1014,7 @@ async def show_support(callback: CallbackQuery):
         reply_markup=keyboard
     )
 
+# ============ ПОМОЩЬ ============
 @dp.callback_query(lambda c: c.data == "help")
 async def show_help(callback: CallbackQuery):
     try:
@@ -1053,6 +1045,7 @@ async def show_help(callback: CallbackQuery):
         reply_markup=back_button()
     )
 
+# ============ НАЗАД В МЕНЮ ============
 @dp.callback_query(lambda c: c.data == "back_to_menu")
 async def back_to_menu(callback: CallbackQuery):
     try:
