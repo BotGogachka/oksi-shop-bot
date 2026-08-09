@@ -10,6 +10,10 @@ from datetime import datetime
 from flask import Flask
 import threading
 import logging
+import json
+import hashlib
+import hmac
+import aiohttp
 
 # ============ ЛОГИРОВАНИЕ ============
 logging.basicConfig(level=logging.INFO)
@@ -19,11 +23,9 @@ logging.basicConfig(level=logging.INFO)
 BOT_TOKEN = "8909837555:AAGZOkg1i3_QoWdpq7PpGu5gJb8-KwIf7WI"
 ADMIN_ID = 8901845559
 
-# ДЛЯ RENDER - РАСКОММЕНТИРУЙ ЭТИ СТРОКИ И ЗАКОММЕНТИРУЙ ВЕРХНИЕ
-# BOT_TOKEN = os.environ.get("TELEGRAM_TOKEN")
-# ADMIN_ID = int(os.environ.get("ADMIN_ID", 8901845559))
-# if not BOT_TOKEN:
-#     raise ValueError("❌ TELEGRAM_TOKEN не найден! Добавь его в переменные окружения Render.")
+# ТОКЕНЫ ДЛЯ ПЛАТЕЖЕЙ (УЖЕ ВСТАВЛЕНЫ)
+CRYPTOBOT_TOKEN = "620220:AAdMBwWMpRXLqndrEHYTeV3lt0KiphM7A7u"
+XROCKET_API_KEY = "64acc4de748ed47a541bb3c47"
 
 # ============ FLASK ДЛЯ RENDER ============
 app = Flask(__name__)
@@ -56,7 +58,6 @@ IMAGES = {
     "my_accounts": "AgACAgIAAxkBAAM-anjpa2hL6wfCp6QR7BprJ3hA3ocAAtIgaxsUCcFLOU1dKhM2mk8BAAMCAAN5AAM9BA",
     "deposit": "AgACAgIAAxkBAANGanjp5lUdm-RmUJy_LDeabdZHW5QAAtggaxsUCcFLngPKPQlD9t4BAAMCAAN5AAM9BA",
     "referral": "AgACAgIAAxkBAANEanjp17kCeGj6mhRz-Uv5GBINt5sAAtYgaxsUCcFLnrAluR9mpOgBAAMCAAN5AAM9BA",
-    "contact_admin": "AgACAgIAAxkBAANIanjp9eO9q5jo17Ye_AqeGDeDrucAAtkgaxsUCcFLsX9Wl1vXSZkBAAMCAAN5AAM9BA",
     "support": "AgACAgIAAxkBAANKanjqAQxnOuG4UrPN9C2dceRWtMwAAtogaxsUCcFLi3im1mxCbVsBAAMCAAN5AAM9BA",
     "enter_shop": "AgACAgIAAxkBAANCanjpuWbNJLi0IAaU0lAzoey-QloAAtUgaxsUCcFLApfKreEE9AABAQADAgADeQADPQQ",
     "welcome": "AgACAgIAAxkBAANCanjpuWbNJLi0IAaU0lAzoey-QloAAtUgaxsUCcFLApfKreEE9AABAQADAgADeQADPQQ",
@@ -117,6 +118,110 @@ async def apply_referral(new_user_id, ref_code):
     db.close()
     return False, 0
 
+# ============ КРИПТОПЛАТЕЖИ ============
+# Функция создания счета через CryptoBot
+async def create_cryptobot_invoice(user_id, amount_usd):
+    """Создает счет в CryptoBot на сумму в USD"""
+    try:
+        # Используем прямые HTTP-запросы к API CryptoBot
+        url = "https://api.cryptobot.ai/v1/invoice/create"
+        payload = {
+            "currency_type": "fiat",
+            "fiat": "USD",
+            "amount": str(amount_usd),
+            "description": f"Пополнение баланса OksiShop",
+            "payload": f"user_{user_id}",
+            "expires_in": 3600
+        }
+        headers = {
+            "Authorization": f"Bearer {CRYPTOBOT_TOKEN}",
+            "Content-Type": "application/json"
+        }
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, headers=headers, json=payload) as resp:
+                data = await resp.json()
+                if data.get("status") == "success":
+                    invoice = data.get("result")
+                    return {
+                        "success": True,
+                        "invoice_id": invoice.get("invoice_id"),
+                        "pay_url": invoice.get("bot_invoice_url"),
+                        "amount": amount_usd
+                    }
+                else:
+                    return {"success": False, "error": data.get("error", "Unknown error")}
+    except Exception as e:
+        logging.error(f"CryptoBot error: {e}")
+        return {"success": False, "error": str(e)}
+
+# Функция проверки статуса счета CryptoBot
+async def check_cryptobot_payment(invoice_id):
+    try:
+        url = f"https://api.cryptobot.ai/v1/invoice/get?invoice_id={invoice_id}"
+        headers = {
+            "Authorization": f"Bearer {CRYPTOBOT_TOKEN}",
+            "Content-Type": "application/json"
+        }
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=headers) as resp:
+                data = await resp.json()
+                if data.get("status") == "success":
+                    invoice = data.get("result")
+                    if invoice.get("status") == "paid":
+                        return {
+                            "success": True, 
+                            "paid": True, 
+                            "amount": float(invoice.get("amount"))
+                        }
+                    else:
+                        return {
+                            "success": True, 
+                            "paid": False, 
+                            "status": invoice.get("status")
+                        }
+                else:
+                    return {"success": False, "error": data.get("error", "Unknown error")}
+    except Exception as e:
+        logging.error(f"CryptoBot check error: {e}")
+        return {"success": False, "error": str(e)}
+
+# Функция создания счета через xRocket
+async def create_xrocket_invoice(user_id, amount_usd):
+    """Создает счет в xRocket на сумму в USD (конвертирует в TON)"""
+    try:
+        amount_ton = amount_usd / 5.0  # 1 TON ≈ 5 USD
+        
+        url = "https://pay.xrocket.tg/multi-invoice"
+        headers = {
+            "Rocket-Pay-Key": XROCKET_API_KEY,
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "currency": "TONCOIN",
+            "amount": str(amount_ton),
+            "description": f"Пополнение баланса OksiShop для пользователя {user_id}",
+            "numPayments": 1,
+            "expiredIn": 3600
+        }
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, headers=headers, json=payload) as resp:
+                data = await resp.json()
+                if data.get("status") == "success":
+                    return {
+                        "success": True,
+                        "invoice_id": data.get("invoiceId"),
+                        "pay_url": data.get("link"),
+                        "amount": amount_usd
+                    }
+                else:
+                    return {"success": False, "error": data.get("error", "Unknown error")}
+    except Exception as e:
+        logging.error(f"xRocket error: {e}")
+        return {"success": False, "error": str(e)}
+
 # ============ ГЛАВНОЕ МЕНЮ ============
 def main_menu():
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -125,7 +230,6 @@ def main_menu():
         [InlineKeyboardButton(text="📱 Мои покупки", callback_data="my_accounts")],
         [InlineKeyboardButton(text="💰 Пополнить баланс", callback_data="deposit")],
         [InlineKeyboardButton(text="🎁 Реферальная система", callback_data="referral")],
-        [InlineKeyboardButton(text="📩 Написать админу", callback_data="contact_admin")],
         [InlineKeyboardButton(text="🛠 Техподдержка", callback_data="support")],
         [InlineKeyboardButton(text="❓ Помощь и FAQ", callback_data="help")]
     ])
@@ -231,9 +335,8 @@ async def enter_shop(callback: CallbackQuery):
 📦 *Каталог* — посмотреть ассортимент
 👤 *Профиль* — проверить баланс
 📱 *Мои покупки* — история покупок
-💰 *Пополнить* — пополнить баланс
+💰 *Пополнить* — пополнить баланс криптой
 🎁 *Рефералка* — приглашай друзей
-📩 *Админ* — написать владельцу
 🛠 *Поддержка* — помощь и контакты
 ❓ *Помощь* — ответы на вопросы
 ━━━━━━━━━━━━━━━━━━━
@@ -398,8 +501,7 @@ async def buy_product(callback: CallbackQuery):
             f"💰 Цена: {price} ₽\n"
             f"💳 Ваш баланс: {balance} ₽\n"
             f"📊 Не хватает: {price - balance} ₽\n\n"
-            f"💳 Пополните баланс в главном меню!\n"
-            f"📩 Связь с админом: @YoungTrappa8122",
+            f"💰 Пополните баланс в главном меню!",
             parse_mode="Markdown",
             reply_markup=back_button()
         )
@@ -590,7 +692,7 @@ async def show_my_accounts(callback: CallbackQuery):
         reply_markup=keyboard
     )
 
-# ============ ПОПОЛНЕНИЕ ============
+# ============ ПОПОЛНЕНИЕ БАЛАНСА ============
 @dp.callback_query(lambda c: c.data == "deposit")
 async def show_deposit(callback: CallbackQuery):
     try:
@@ -598,36 +700,21 @@ async def show_deposit(callback: CallbackQuery):
     except:
         pass
     
-    username = f"@{callback.from_user.username}" if callback.from_user.username else "не указан"
-    
-    caption = f"""
+    caption = """
 💰 *ПОПОЛНЕНИЕ БАЛАНСА* 💰
 ━━━━━━━━━━━━━━━━━━━
 
-📌 *Как пополнить:*
+Выберите способ пополнения:
 
-1️⃣ Напишите админу: @YoungTrappa8122
-2️⃣ Укажите сумму пополнения
-3️⃣ Ваши данные для пополнения:
-   👤 Имя: {callback.from_user.full_name}
-   🆔 Юзернейм: {username}
-4️⃣ Дождитесь подтверждения
+💳 *CryptoBot* — быстрая оплата в USDT, TON, BTC и других криптовалютах
+🚀 *xRocket* — оплата через TON с удобным интерфейсом
 
-💳 *Способы оплаты:*
-• Перевод на карту
-• Криптовалюта (USDT, BTC)
-
-━━━━━━━━━━━━━━━━━━━
-📩 Админ: @YoungTrappa8122
-⏰ Время ответа: 5-15 минут
-━━━━━━━━━━━━━━━━━━━
-
-🔒 *Безопасность:* все данные защищены
-✅ *Гарантия:* честные сделки
+👇 *Нажмите на кнопку ниже, чтобы выбрать способ:*
 """
     
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📩 Написать админу", url="https://t.me/YoungTrappa8122")],
+        [InlineKeyboardButton(text="💳 CryptoBot", callback_data="deposit_cryptobot")],
+        [InlineKeyboardButton(text="🚀 xRocket", callback_data="deposit_xrocket")],
         [InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")]
     ])
     
@@ -639,113 +726,302 @@ async def show_deposit(callback: CallbackQuery):
         reply_markup=keyboard
     )
 
-# ============ НАПИСАТЬ АДМИНУ ============
-@dp.callback_query(lambda c: c.data == "contact_admin")
-async def contact_admin(callback: CallbackQuery):
+# ============ CRYPTOBOT ПОПОЛНЕНИЕ ============
+@dp.callback_query(lambda c: c.data == "deposit_cryptobot")
+async def deposit_cryptobot(callback: CallbackQuery):
     try:
         await callback.answer()
     except:
         pass
     
-    username = f"@{callback.from_user.username}" if callback.from_user.username else "не указан"
-    
-    caption = f"""
-📩 *СВЯЗЬ С АДМИНОМ* 📩
-━━━━━━━━━━━━━━━━━━━
-
-👤 *Владелец магазина:* @YoungTrappa8122
-
-📌 *По каким вопросам писать:*
-• Пополнение баланса
-• Проблемы с аккаунтами
-• Вопросы по гарантии
-• Сотрудничество
-• Любые другие вопросы
-
-⏰ *Время ответа:* 24/7
-
-📋 *Ваши данные:*
-👤 Имя: {callback.from_user.full_name}
-🆔 Юзернейм: {username}
-
-👇 *Нажмите на кнопку ниже, чтобы написать админу:*
-"""
-    
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📩 Написать админу", url="https://t.me/YoungTrappa8122")],
-        [InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")]
+        [InlineKeyboardButton(text="💳 5 USD (~500 ₽)", callback_data="cb_amount_5")],
+        [InlineKeyboardButton(text="💳 10 USD (~1000 ₽)", callback_data="cb_amount_10")],
+        [InlineKeyboardButton(text="💳 25 USD (~2500 ₽)", callback_data="cb_amount_25")],
+        [InlineKeyboardButton(text="💳 50 USD (~5000 ₽)", callback_data="cb_amount_50")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="deposit")]
     ])
     
-    await callback.message.delete()
-    await callback.message.answer_photo(
-        photo=IMAGES["contact_admin"],
-        caption=caption,
+    await callback.message.edit_text(
+        "💰 *CryptoBot — выберите сумму пополнения:*\n\n"
+        "Сумма будет конвертирована в криптовалюту по текущему курсу.",
         parse_mode="Markdown",
         reply_markup=keyboard
     )
 
-# ============ ТЕХПОДДЕРЖКА ============
-@dp.callback_query(lambda c: c.data == "support")
-async def show_support(callback: CallbackQuery):
+# ============ ОБРАБОТКА ВЫБОРА СУММЫ CRYPTOBOT ============
+@dp.callback_query(lambda c: c.data and c.data.startswith("cb_amount_"))
+async def process_cryptobot_amount(callback: CallbackQuery):
     try:
         await callback.answer()
     except:
         pass
     
-    username = f"@{callback.from_user.username}" if callback.from_user.username else "не указан"
+    amount_usd = float(callback.data.split("_")[2])
+    user_id = callback.from_user.id
     
-    caption = f"""
-🛠 *ТЕХНИЧЕСКАЯ ПОДДЕРЖКА* 🛠
-━━━━━━━━━━━━━━━━━━━
+    result = await create_cryptobot_invoice(user_id, amount_usd)
+    
+    if not result["success"]:
+        await callback.message.edit_text(
+            f"❌ *Ошибка создания счета:*\n{result['error']}\n\n"
+            "Попробуйте позже или выберите другой способ оплаты.",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔙 Назад", callback_data="deposit")]
+            ])
+        )
+        return
+    
+    db = get_db()
+    cursor = db.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS pending_payments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            invoice_id TEXT,
+            amount REAL,
+            system TEXT,
+            created_at TEXT,
+            status TEXT DEFAULT 'pending'
+        )
+    """)
+    cursor.execute(
+        "INSERT INTO pending_payments (user_id, invoice_id, amount, system, created_at) VALUES (?, ?, ?, ?, ?)",
+        (user_id, result["invoice_id"], amount_usd, "cryptobot", datetime.now().strftime("%d.%m.%Y %H:%M"))
+    )
+    db.commit()
+    db.close()
+    
+    await callback.message.edit_text(
+        f"✅ *Счёт создан!* ✅\n\n"
+        f"💰 Сумма: {amount_usd} USD (~{amount_usd * 100} ₽)\n"
+        f"🆔 ID счёта: `{result['invoice_id']}`\n\n"
+        f"🔗 *Ссылка для оплаты:*\n"
+        f"{result['pay_url']}\n\n"
+        f"📌 После оплаты нажмите «Проверить оплату»\n"
+        f"⏳ Счёт действителен 1 час",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Проверить оплату", callback_data=f"check_cb_{result['invoice_id']}")],
+            [InlineKeyboardButton(text="🏠 В меню", callback_data="back_to_menu")]
+        ])
+    )
 
-📌 *Мы всегда готовы помочь!*
+# ============ ПРОВЕРКА ОПЛАТЫ CRYPTOBOT ============
+@dp.callback_query(lambda c: c.data and c.data.startswith("check_cb_"))
+async def check_cryptobot_payment_handler(callback: CallbackQuery):
+    try:
+        await callback.answer()
+    except:
+        pass
+    
+    invoice_id = callback.data.split("_")[2]
+    user_id = callback.from_user.id
+    
+    result = await check_cryptobot_payment(invoice_id)
+    
+    if not result["success"]:
+        await callback.message.edit_text(
+            f"❌ Ошибка проверки: {result['error']}",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔄 Попробовать снова", callback_data=f"check_cb_{invoice_id}")],
+                [InlineKeyboardButton(text="🏠 В меню", callback_data="back_to_menu")]
+            ])
+        )
+        return
+    
+    if result["paid"]:
+        db = get_db()
+        cursor = db.cursor()
+        amount_rub = int(result["amount"] * 100)
+        cursor.execute("UPDATE users SET balance = balance + ? WHERE id = ?", (amount_rub, user_id))
+        cursor.execute("UPDATE pending_payments SET status = 'paid' WHERE invoice_id = ?", (invoice_id,))
+        db.commit()
+        db.close()
+        
+        await callback.message.edit_text(
+            f"✅ *Оплата подтверждена!* ✅\n\n"
+            f"💰 Начислено: {amount_rub} ₽\n"
+            f"📊 Проверьте баланс в профиле!\n"
+            f"🌟 Спасибо за пополнение!",
+            parse_mode="Markdown",
+            reply_markup=main_menu()
+        )
+    elif result.get("status") == "pending":
+        await callback.message.edit_text(
+            f"⏳ *Оплата ещё не подтверждена*\n\n"
+            f"Подождите 1-2 минуты и попробуйте снова.\n"
+            f"Если оплата прошла, но баланс не начислен — напишите @YoungTrappa8122",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔄 Проверить снова", callback_data=f"check_cb_{invoice_id}")],
+                [InlineKeyboardButton(text="🏠 В меню", callback_data="back_to_menu")]
+            ])
+        )
+    else:
+        await callback.message.edit_text(
+            f"❌ *Счёт не оплачен или истёк*\n\n"
+            f"Создайте новый счёт для пополнения.",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="💰 Новый счёт", callback_data="deposit_cryptobot")],
+                [InlineKeyboardButton(text="🏠 В меню", callback_data="back_to_menu")]
+            ])
+        )
 
-📩 *Способы связи:*
-• Telegram: @YoungTrappa8122
-• Ответ в течение 5-15 минут
-
-⏰ *График работы:*
-• Пн-Вс: 24/7
-• Без выходных
-
-━━━━━━━━━━━━━━━━━━━
-
-📋 *С чем можем помочь:*
-
-✅ Проблемы с оплатой
-✅ Аккаунт не подходит
-✅ Технические неполадки
-✅ Вопросы по гарантии
-✅ Общие вопросы
-
-━━━━━━━━━━━━━━━━━━━
-
-💡 *Перед обращением:*
-1. Проверьте баланс в профиле
-2. Проверьте данные аккаунта
-3. Убедитесь, что прошло не более 1 часа
-
-📋 *Ваши данные:*
-👤 Имя: {callback.from_user.full_name}
-🆔 Юзернейм: {username}
-
-👇 *Напишите нам, мы решим любой вопрос!*
-"""
+# ============ XROCKET ПОПОЛНЕНИЕ ============
+@dp.callback_query(lambda c: c.data == "deposit_xrocket")
+async def deposit_xrocket(callback: CallbackQuery):
+    try:
+        await callback.answer()
+    except:
+        pass
     
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📩 Связаться с поддержкой", url="https://t.me/YoungTrappa8122")],
-        [InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")]
+        [InlineKeyboardButton(text="🚀 5 USD (~500 ₽)", callback_data="xr_amount_5")],
+        [InlineKeyboardButton(text="🚀 10 USD (~1000 ₽)", callback_data="xr_amount_10")],
+        [InlineKeyboardButton(text="🚀 25 USD (~2500 ₽)", callback_data="xr_amount_25")],
+        [InlineKeyboardButton(text="🚀 50 USD (~5000 ₽)", callback_data="xr_amount_50")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="deposit")]
     ])
     
-    await callback.message.delete()
-    await callback.message.answer_photo(
-        photo=IMAGES["support"],
-        caption=caption,
+    await callback.message.edit_text(
+        "🚀 *xRocket — выберите сумму пополнения:*\n\n"
+        "Оплата в TON по текущему курсу (1 TON ≈ 5 USD).",
         parse_mode="Markdown",
         reply_markup=keyboard
     )
 
-# ============ РЕФЕРАЛКА ============
+# ============ ОБРАБОТКА ВЫБОРА СУММЫ XROCKET ============
+@dp.callback_query(lambda c: c.data and c.data.startswith("xr_amount_"))
+async def process_xrocket_amount(callback: CallbackQuery):
+    try:
+        await callback.answer()
+    except:
+        pass
+    
+    amount_usd = float(callback.data.split("_")[2])
+    user_id = callback.from_user.id
+    
+    result = await create_xrocket_invoice(user_id, amount_usd)
+    
+    if not result["success"]:
+        await callback.message.edit_text(
+            f"❌ *Ошибка создания счета:*\n{result['error']}\n\n"
+            "Попробуйте позже или выберите другой способ оплаты.",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔙 Назад", callback_data="deposit")]
+            ])
+        )
+        return
+    
+    db = get_db()
+    cursor = db.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS pending_payments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            invoice_id TEXT,
+            amount REAL,
+            system TEXT,
+            created_at TEXT,
+            status TEXT DEFAULT 'pending'
+        )
+    """)
+    cursor.execute(
+        "INSERT INTO pending_payments (user_id, invoice_id, amount, system, created_at) VALUES (?, ?, ?, ?, ?)",
+        (user_id, result["invoice_id"], amount_usd, "xrocket", datetime.now().strftime("%d.%m.%Y %H:%M"))
+    )
+    db.commit()
+    db.close()
+    
+    await callback.message.edit_text(
+        f"✅ *Счёт создан!* ✅\n\n"
+        f"💰 Сумма: {amount_usd} USD (~{amount_usd * 100} ₽)\n"
+        f"🆔 ID счёта: `{result['invoice_id']}`\n\n"
+        f"🔗 *Ссылка для оплаты:*\n"
+        f"{result['pay_url']}\n\n"
+        f"📌 После оплаты нажмите «Проверить оплату»\n"
+        f"⏳ Счёт действителен 1 час",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Проверить оплату", callback_data=f"check_xr_{result['invoice_id']}")],
+            [InlineKeyboardButton(text="🏠 В меню", callback_data="back_to_menu")]
+        ])
+    )
+
+# ============ ПРОВЕРКА ОПЛАТЫ XROCKET ============
+@dp.callback_query(lambda c: c.data and c.data.startswith("check_xr_"))
+async def check_xrocket_payment_handler(callback: CallbackQuery):
+    try:
+        await callback.answer()
+    except:
+        pass
+    
+    invoice_id = callback.data.split("_")[2]
+    user_id = callback.from_user.id
+    
+    try:
+        url = f"https://pay.xrocket.tg/invoice/{invoice_id}"
+        headers = {"Rocket-Pay-Key": XROCKET_API_KEY}
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=headers) as resp:
+                data = await resp.json()
+                if data.get("status") == "success":
+                    invoice_data = data.get("data", {})
+                    if invoice_data.get("status") == "paid":
+                        db = get_db()
+                        cursor = db.cursor()
+                        amount_rub = int(amount_usd * 100)  # Передаём сохранённую сумму
+                        cursor.execute("UPDATE users SET balance = balance + ? WHERE id = ?", (amount_rub, user_id))
+                        cursor.execute("UPDATE pending_payments SET status = 'paid' WHERE invoice_id = ?", (invoice_id,))
+                        db.commit()
+                        db.close()
+                        
+                        await callback.message.edit_text(
+                            f"✅ *Оплата подтверждена!* ✅\n\n"
+                            f"💰 Начислено: {amount_rub} ₽\n"
+                            f"📊 Проверьте баланс в профиле!\n"
+                            f"🌟 Спасибо за пополнение!",
+                            parse_mode="Markdown",
+                            reply_markup=main_menu()
+                        )
+                    elif invoice_data.get("status") == "pending":
+                        await callback.message.edit_text(
+                            f"⏳ *Оплата ещё не подтверждена*\n\n"
+                            f"Подождите 1-2 минуты и попробуйте снова.",
+                            parse_mode="Markdown",
+                            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                                [InlineKeyboardButton(text="🔄 Проверить снова", callback_data=f"check_xr_{invoice_id}")],
+                                [InlineKeyboardButton(text="🏠 В меню", callback_data="back_to_menu")]
+                            ])
+                        )
+                    else:
+                        await callback.message.edit_text(
+                            f"❌ *Счёт не оплачен или истёк*\n\n"
+                            f"Создайте новый счёт для пополнения.",
+                            parse_mode="Markdown",
+                            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                                [InlineKeyboardButton(text="🚀 Новый счёт", callback_data="deposit_xrocket")],
+                                [InlineKeyboardButton(text="🏠 В меню", callback_data="back_to_menu")]
+                            ])
+                        )
+                else:
+                    await callback.message.edit_text(
+                        f"❌ Ошибка проверки: {data.get('error', 'Unknown error')}",
+                        reply_markup=back_button()
+                    )
+    except Exception as e:
+        logging.error(f"xRocket check error: {e}")
+        await callback.message.edit_text(
+            f"❌ Ошибка проверки: {str(e)}",
+            reply_markup=back_button()
+        )
+
+# ============ РЕФЕРАЛЬНАЯ СИСТЕМА ============
 @dp.callback_query(lambda c: c.data == "referral")
 async def show_referral(callback: CallbackQuery):
     try:
@@ -852,6 +1128,67 @@ async def share_referral(callback: CallbackQuery):
         reply_markup=keyboard
     )
 
+# ============ ТЕХПОДДЕРЖКА ============
+@dp.callback_query(lambda c: c.data == "support")
+async def show_support(callback: CallbackQuery):
+    try:
+        await callback.answer()
+    except:
+        pass
+    
+    username = f"@{callback.from_user.username}" if callback.from_user.username else "не указан"
+    
+    caption = f"""
+🛠 *ТЕХНИЧЕСКАЯ ПОДДЕРЖКА* 🛠
+━━━━━━━━━━━━━━━━━━━
+
+📌 *Мы всегда готовы помочь!*
+
+📩 *Способы связи:*
+• Telegram: @YoungTrappa8122
+• Ответ в течение 5-15 минут
+
+⏰ *График работы:*
+• Пн-Вс: 24/7
+• Без выходных
+
+━━━━━━━━━━━━━━━━━━━
+
+📋 *С чем можем помочь:*
+
+✅ Проблемы с оплатой
+✅ Аккаунт не подходит
+✅ Технические неполадки
+✅ Вопросы по гарантии
+✅ Общие вопросы
+
+━━━━━━━━━━━━━━━━━━━
+
+💡 *Перед обращением:*
+1. Проверьте баланс в профиле
+2. Проверьте данные аккаунта
+3. Убедитесь, что прошло не более 1 часа
+
+📋 *Ваши данные:*
+👤 Имя: {callback.from_user.full_name}
+🆔 Юзернейм: {username}
+
+👇 *Напишите нам, мы решим любой вопрос!*
+"""
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📩 Связаться с поддержкой", url="https://t.me/YoungTrappa8122")],
+        [InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")]
+    ])
+    
+    await callback.message.delete()
+    await callback.message.answer_photo(
+        photo=IMAGES["support"],
+        caption=caption,
+        parse_mode="Markdown",
+        reply_markup=keyboard
+    )
+
 # ============ ПОМОЩЬ ============
 @dp.callback_query(lambda c: c.data == "help")
 async def show_help(callback: CallbackQuery):
@@ -867,8 +1204,9 @@ async def show_help(callback: CallbackQuery):
 📌 *КАК КУПИТЬ АККАУНТ:*
 
 1️⃣ *Пополните баланс*
-   • Напишите админу @YoungTrappa8122
-   • Укажите сумму и ваш ID
+   • Перейдите в раздел «💰 Пополнить баланс»
+   • Выберите способ оплаты (CryptoBot или xRocket)
+   • Оплатите счёт в криптовалюте
 
 2️⃣ *Выберите товар*
    • Перейдите в раздел «📦 Каталог»
