@@ -32,10 +32,12 @@ def health():
 @app.route('/crypto_webhook', methods=['GET', 'POST'])
 def crypto_webhook():
     if request.method == 'GET':
-        return "✅ CryptoBot webhook active", 200
+        return "CryptoBot webhook active", 200
+    
     try:
         data = request.get_json()
-        logging.info(f"📩 Webhook: {data}")
+        logging.info(f"📩 Webhook CryptoBot: {data}")
+        
         if data and data.get('update_type') == 'invoice_paid':
             payload = data.get('payload', {})
             user_id_str = payload.get('payload', '')
@@ -43,15 +45,17 @@ def crypto_webhook():
                 user_id = int(user_id_str.split('_')[1])
                 amount_usd = float(payload.get('amount', 0))
                 amount_rub = int(amount_usd * 100)
+                
                 db = get_db()
                 cursor = db.cursor()
                 cursor.execute("UPDATE users SET balance = balance + ? WHERE id = ?", (amount_rub, user_id))
                 db.commit()
                 db.close()
-                logging.info(f"✅ +{amount_rub} ₽ user {user_id}")
+                logging.info(f"✅ Начислено {amount_rub} ₽ пользователю {user_id}")
+                
                 try:
                     asyncio.run_coroutine_threadsafe(
-                        bot.send_message(user_id, f"✨ *Оплата прошла!* +{amount_rub} ₽", parse_mode="Markdown"),
+                        bot.send_message(user_id, f"✅ *Оплата прошла!* +{amount_rub} ₽", parse_mode="Markdown"),
                         asyncio.get_event_loop()
                     )
                 except:
@@ -59,13 +63,13 @@ def crypto_webhook():
                 return "OK", 200
         return "OK", 200
     except Exception as e:
-        logging.error(f"Webhook error: {e}")
+        logging.error(f"CryptoBot webhook error: {e}")
         return "Error", 500
 
 @app.route('/xrocket_webhook', methods=['GET', 'POST'])
 def xrocket_webhook():
     if request.method == 'GET':
-        return "✅ xRocket webhook active", 200
+        return "xRocket webhook active", 200
     return "OK", 200
 
 # ============ БОТ ============
@@ -76,21 +80,57 @@ def get_db():
     db_path = os.path.join(os.path.dirname(__file__), "shop.db")
     db = sqlite3.connect(db_path)
     cursor = db.cursor()
+    
     cursor.execute('''CREATE TABLE IF NOT EXISTS users (
-        id INTEGER PRIMARY KEY, balance INTEGER DEFAULT 0, join_date TEXT, username TEXT)''')
+        id INTEGER PRIMARY KEY,
+        balance INTEGER DEFAULT 0,
+        join_date TEXT,
+        username TEXT,
+        ref_code TEXT,
+        referrer_id INTEGER,
+        ref_bonus INTEGER DEFAULT 0
+    )''')
+    
     cursor.execute("PRAGMA table_info(users)")
     columns = [col[1] for col in cursor.fetchall()]
     if "username" not in columns:
         cursor.execute("ALTER TABLE users ADD COLUMN username TEXT")
+    if "ref_code" not in columns:
+        cursor.execute("ALTER TABLE users ADD COLUMN ref_code TEXT")
+    if "referrer_id" not in columns:
+        cursor.execute("ALTER TABLE users ADD COLUMN referrer_id INTEGER")
+    if "ref_bonus" not in columns:
+        cursor.execute("ALTER TABLE users ADD COLUMN ref_bonus INTEGER DEFAULT 0")
+    
     cursor.execute('''CREATE TABLE IF NOT EXISTS products (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, price INTEGER, stock INTEGER, 
-        image TEXT, category TEXT DEFAULT 'accounts')''')
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT,
+        price INTEGER,
+        stock INTEGER,
+        image TEXT,
+        category TEXT DEFAULT 'accounts'
+    )''')
+    
     cursor.execute('''CREATE TABLE IF NOT EXISTS accounts (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, product_id INTEGER, data TEXT, proxy TEXT,
-        status TEXT DEFAULT 'available', buyer_id INTEGER, buy_date TEXT)''')
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        product_id INTEGER,
+        data TEXT,
+        proxy TEXT,
+        status TEXT DEFAULT 'available',
+        buyer_id INTEGER,
+        buy_date TEXT
+    )''')
+    
     cursor.execute('''CREATE TABLE IF NOT EXISTS pending_payments (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, invoice_id TEXT,
-        amount REAL, system TEXT, created_at TEXT, status TEXT DEFAULT 'pending')''')
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        invoice_id TEXT,
+        amount REAL,
+        system TEXT,
+        created_at TEXT,
+        status TEXT DEFAULT 'pending'
+    )''')
+    
     db.commit()
     db.close()
     return sqlite3.connect(db_path)
@@ -142,7 +182,7 @@ async def apply_referral(new_user_id, ref_code):
         db.commit()
         db.close()
         try:
-            await bot.send_message(referrer_id, f"🎉 *Реферал!* +{BONUS_AMOUNT} ₽", parse_mode="Markdown")
+            await bot.send_message(referrer_id, f"🎉 +{BONUS_AMOUNT} ₽ за реферала!", parse_mode="Markdown")
         except:
             pass
         return True, BONUS_AMOUNT
@@ -153,20 +193,31 @@ async def apply_referral(new_user_id, ref_code):
 async def create_cryptobot_invoice(user_id, amount_usd):
     try:
         url = "https://pay.crypt.bot/api/createInvoice"
-        payload = {"currency_type": "fiat", "fiat": "USD", "amount": str(amount_usd),
-                   "description": "OksiShop", "payload": f"user_{user_id}", "expires_in": 3600}
-        headers = {"Crypto-Pay-API-Token": CRYPTOBOT_TOKEN, "Content-Type": "application/json"}
+        payload = {
+            "currency_type": "fiat",
+            "fiat": "USD",
+            "amount": str(amount_usd),
+            "description": "OksiShop",
+            "payload": f"user_{user_id}",
+            "expires_in": 3600
+        }
+        headers = {
+            "Crypto-Pay-API-Token": CRYPTOBOT_TOKEN,
+            "Content-Type": "application/json"
+        }
         async with aiohttp.ClientSession() as session:
             async with session.post(url, headers=headers, json=payload) as resp:
                 data = await resp.json()
-                logging.info(f"CryptoBot: {data}")
                 if data.get("ok") and data.get("result"):
                     invoice = data.get("result")
-                    return {"success": True, "invoice_id": invoice.get("invoice_id"),
-                            "pay_url": invoice.get("bot_invoice_url"), "amount": amount_usd}
+                    return {
+                        "success": True,
+                        "invoice_id": invoice.get("invoice_id"),
+                        "pay_url": invoice.get("bot_invoice_url"),
+                        "amount": amount_usd
+                    }
                 return {"success": False, "error": data.get("error", "Unknown")}
     except Exception as e:
-        logging.error(f"CryptoBot error: {e}")
         return {"success": False, "error": str(e)}
 
 async def check_cryptobot_payment(invoice_id):
@@ -196,20 +247,18 @@ async def create_xrocket_invoice(user_id, amount_usd):
         amount_ton = amount_usd / 5.0
         url = "https://pay.xrocket.tg/invoice"
         headers = {"Rocket-Pay-Key": XROCKET_API_KEY, "Content-Type": "application/json"}
-        payload = {"currency": "TON", "amount": str(round(amount_ton, 2)),
-                   "description": "OksiShop", "expiresIn": 3600}
+        payload = {"currency": "TON", "amount": str(round(amount_ton, 2)), "description": "OksiShop", "expiresIn": 3600}
         async with aiohttp.ClientSession() as session:
             async with session.post(url, headers=headers, json=payload) as resp:
                 data = await resp.json()
                 if data.get("status") == "success":
                     invoice = data.get("data", {})
-                    return {"success": True, "invoice_id": invoice.get("invoiceId"),
-                            "pay_url": invoice.get("link"), "amount": amount_usd}
+                    return {"success": True, "invoice_id": invoice.get("invoiceId"), "pay_url": invoice.get("link"), "amount": amount_usd}
                 return {"success": False, "error": data.get("error", "Unknown")}
     except Exception as e:
         return {"success": False, "error": str(e)}
 
-# ============ МЕНЮ (ИСПРАВЛЕНЫ) ============
+# ============ МЕНЮ ============
 def main_menu():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="👤 Профиль", callback_data="profile"),
@@ -259,6 +308,7 @@ async def start(message: Message):
     username = message.from_user.username or None
     args = message.text.split()
     ref_code = args[1] if len(args) > 1 else None
+    
     db = get_db()
     cursor = db.cursor()
     cursor.execute("SELECT id FROM users WHERE id = ?", (user_id,))
@@ -274,6 +324,7 @@ async def start(message: Message):
     else:
         db.close()
         text = "✨ *OksiShop*\n👋 С возвращением!\n👇 Выбери действие:"
+    
     await message.answer(text, parse_mode="Markdown", reply_markup=main_menu())
 
 # ============ НАЗАД ============
@@ -292,6 +343,7 @@ async def show_market(callback: CallbackQuery):
 @dp.callback_query(lambda c: c.data and c.data.startswith("category_"))
 async def show_category(callback: CallbackQuery):
     await callback.answer()
+    
     cat_map = {
         "category_accounts": ("📱 Аккаунты", "accounts"),
         "category_packs": ("📦 Паки", "packs"),
@@ -300,42 +352,53 @@ async def show_category(callback: CallbackQuery):
         "category_stars": ("🌟 Telegram Stars", "stars")
     }
     cat_name, cat_key = cat_map.get(callback.data, ("Категория", "default"))
+    
     db = get_db()
     cursor = db.cursor()
     cursor.execute("SELECT id, name, price, stock, image FROM products WHERE category = ? AND stock > 0", (cat_key,))
     products = cursor.fetchall()
     db.close()
+    
     if not products:
         await callback.message.edit_text(f"{cat_name}\n😔 Товаров пока нет", parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(text="◀️ Назад", callback_data="market")]]))
         return
+    
     kb = InlineKeyboardMarkup(inline_keyboard=[])
     for p in products:
+        pid, name, price, stock, image = p
         kb.inline_keyboard.append([
-            InlineKeyboardButton(text=f"📌 {p[1]} — {p[2]} ₽ (осталось: {p[3]})", callback_data=f"view_{p[0]}")
+            InlineKeyboardButton(text=f"📌 {name} — {price} ₽ (осталось: {stock})", callback_data=f"view_{pid}")
         ])
     kb.inline_keyboard.append([InlineKeyboardButton(text="◀️ Назад", callback_data="market")])
+    
     await callback.message.edit_text(f"{cat_name}\n👇 Нажми на товар:", parse_mode="Markdown", reply_markup=kb)
 
 # ============ ПРОСМОТР ТОВАРА ============
 @dp.callback_query(lambda c: c.data and c.data.startswith("view_"))
 async def view_product(callback: CallbackQuery):
     await callback.answer()
+    
     product_id = int(callback.data.split("_")[1])
     db = get_db()
     cursor = db.cursor()
     cursor.execute("SELECT id, name, price, stock, image FROM products WHERE id = ?", (product_id,))
     p = cursor.fetchone()
     db.close()
+    
     if not p:
         await callback.message.edit_text("❌ Товар не найден", reply_markup=back_button())
         return
+    
     pid, name, price, stock, image = p
+    
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🛒 Купить", callback_data=f"buy_{pid}")],
         [InlineKeyboardButton(text="◀️ Назад", callback_data="market")]
     ])
+    
     caption = f"*{name}*\n💰 {price} ₽ | 📊 {stock} шт.\n✅ Гарантия 1 час"
+    
     if image:
         await callback.message.delete()
         await callback.message.answer_photo(photo=image, caption=caption, parse_mode="Markdown", reply_markup=kb)
@@ -346,47 +409,59 @@ async def view_product(callback: CallbackQuery):
 @dp.callback_query(lambda c: c.data and c.data.startswith("buy_"))
 async def buy_product(callback: CallbackQuery):
     await callback.answer()
+    
     product_id = int(callback.data.split("_")[1])
     user_id = callback.from_user.id
+    
     db = get_db()
     cursor = db.cursor()
     cursor.execute("SELECT balance FROM users WHERE id = ?", (user_id,))
     balance = cursor.fetchone()[0]
     cursor.execute("SELECT price, name, stock FROM products WHERE id = ?", (product_id,))
     price, name, stock = cursor.fetchone()
+    
     if balance < price:
         await callback.message.edit_text(f"❌ Не хватает!\n💰 {price} ₽ | У тебя: {balance} ₽",
             reply_markup=back_button())
         db.close()
         return
+    
     cursor.execute("SELECT id, data, proxy FROM accounts WHERE product_id = ? AND status = 'available' LIMIT 1", (product_id,))
     acc = cursor.fetchone()
+    
     if not acc:
         await callback.message.edit_text("😔 Аккаунты закончились!", reply_markup=back_button())
         db.close()
         return
+    
     acc_id, acc_data, proxy = acc
     cursor.execute("UPDATE users SET balance = balance - ? WHERE id = ?", (price, user_id))
     cursor.execute("UPDATE accounts SET status = 'sold', buyer_id = ?, buy_date = ? WHERE id = ?",
                    (user_id, datetime.now().strftime("%d.%m.%Y %H:%M"), acc_id))
     db.commit()
     db.close()
+    
     data_text = acc_data
     if proxy:
         data_text += f"\n🔌 Proxy: `{proxy}`"
-    await callback.message.edit_text(f"✅ *Куплено!*\n📌 {name}\n💰 -{price} ₽\n📝 `{data_text}`\n⚠️ Гарантия 1 час",
+    
+    await callback.message.edit_text(
+        f"✅ *Куплено!*\n📌 {name}\n💰 -{price} ₽\n📝 `{data_text}`\n⚠️ Гарантия 1 час",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton(text="🛍️ В маркет", callback_data="market")],
             [InlineKeyboardButton(text="🏠 В меню", callback_data="back_to_menu")]
-        ]))
+        ])
+    )
 
 # ============ ПРОФИЛЬ ============
 @dp.callback_query(lambda c: c.data == "profile")
 async def show_profile(callback: CallbackQuery):
     await callback.answer()
+    
     user_id = callback.from_user.id
     username = f"@{callback.from_user.username}" if callback.from_user.username else "❌"
+    
     db = get_db()
     cursor = db.cursor()
     cursor.execute("SELECT balance, join_date FROM users WHERE id = ?", (user_id,))
@@ -396,6 +471,7 @@ async def show_profile(callback: CallbackQuery):
     cursor.execute("SELECT SUM(p.price) FROM accounts a JOIN products p ON a.product_id = p.id WHERE a.status = 'sold' AND a.buyer_id = ?", (user_id,))
     total_spent = cursor.fetchone()[0] or 0
     db.close()
+    
     if total_spent >= 5000:
         status = "👑 VIP"
     elif total_spent >= 1000:
@@ -404,6 +480,7 @@ async def show_profile(callback: CallbackQuery):
         status = "🌟 Активный"
     else:
         status = "🆕 Новичок"
+    
     text = f"👤 *Профиль*\n🆔 `{user_id}`\n👤 {username}\n📅 {join_date}\n💰 Баланс: {balance} ₽\n📊 Статус: {status}\n📦 Покупок: {total_bought}\n💳 Потрачено: {total_spent} ₽"
     await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=profile_menu())
 
@@ -411,6 +488,7 @@ async def show_profile(callback: CallbackQuery):
 @dp.callback_query(lambda c: c.data == "my_accounts")
 async def show_my_accounts(callback: CallbackQuery):
     await callback.answer()
+    
     user_id = callback.from_user.id
     db = get_db()
     cursor = db.cursor()
@@ -419,21 +497,25 @@ async def show_my_accounts(callback: CallbackQuery):
         ORDER BY a.id DESC LIMIT 10""", (user_id,))
     accs = cursor.fetchall()
     db.close()
+    
     if not accs:
         await callback.message.edit_text("📭 История пуста", reply_markup=profile_menu())
         return
+    
     text = "📜 *История*\n"
     for i, (name, data, date, price, proxy) in enumerate(accs, 1):
         text += f"{i}. {name} — {price} ₽\n📝 `{data}`"
         if proxy:
             text += f"\n🔌 `{proxy}`"
         text += f"\n⏰ {date}\n\n"
+    
     await callback.message.edit_text(text[:4000], parse_mode="Markdown", reply_markup=profile_menu())
 
 # ============ МОИ ПРОКСИ ============
 @dp.callback_query(lambda c: c.data == "my_proxies")
 async def show_my_proxies(callback: CallbackQuery):
     await callback.answer()
+    
     user_id = callback.from_user.id
     db = get_db()
     cursor = db.cursor()
@@ -442,12 +524,15 @@ async def show_my_proxies(callback: CallbackQuery):
         ORDER BY id DESC LIMIT 10""", (user_id,))
     proxies = cursor.fetchall()
     db.close()
+    
     if not proxies:
         await callback.message.edit_text("🔌 Прокси не найдены", reply_markup=profile_menu())
         return
+    
     text = "🔌 *Мои прокси*\n"
     for i, (data, proxy, date) in enumerate(proxies, 1):
         text += f"{i}. 📝 `{data}`\n🔌 `{proxy}`\n⏰ {date}\n\n"
+    
     await callback.message.edit_text(text[:4000], parse_mode="Markdown", reply_markup=profile_menu())
 
 # ============ ИНФО ============
@@ -486,9 +571,11 @@ async def process_cryptobot_amount(callback: CallbackQuery):
     amount_usd = amount_rub / 100
     user_id = callback.from_user.id
     result = await create_cryptobot_invoice(user_id, amount_usd)
+    
     if not result["success"]:
         await callback.message.edit_text(f"❌ Ошибка: {result['error']}", reply_markup=back_button())
         return
+    
     await callback.message.edit_text(
         f"✅ *Счёт создан!*\n💰 {amount_rub} ₽\n🔗 [Оплатить]({result['pay_url']})\n📌 После оплаты нажми «Проверить»",
         parse_mode="Markdown",
@@ -505,9 +592,11 @@ async def check_cryptobot_payment_handler(callback: CallbackQuery):
     invoice_id = callback.data.split("_")[2]
     user_id = callback.from_user.id
     result = await check_cryptobot_payment(invoice_id)
+    
     if not result["success"]:
         await callback.message.edit_text(f"❌ Ошибка: {result['error']}", reply_markup=back_button())
         return
+    
     if result.get("paid"):
         db = get_db()
         cursor = db.cursor()
@@ -535,9 +624,11 @@ async def process_xrocket_amount(callback: CallbackQuery):
     amount_usd = amount_rub / 100
     user_id = callback.from_user.id
     result = await create_xrocket_invoice(user_id, amount_usd)
+    
     if not result["success"]:
         await callback.message.edit_text(f"❌ Ошибка: {result['error']}", reply_markup=back_button())
         return
+    
     await callback.message.edit_text(
         f"✅ *Счёт создан!*\n💰 {amount_rub} ₽\n🔗 [Оплатить]({result['pay_url']})\n📌 После оплаты нажми «Проверить»",
         parse_mode="Markdown",
@@ -566,6 +657,7 @@ async def show_referral(callback: CallbackQuery):
     await callback.answer()
     user_id = callback.from_user.id
     ref_code = get_or_create_ref_code(user_id)
+    
     db = get_db()
     cursor = db.cursor()
     cursor.execute("SELECT COUNT(*) FROM users WHERE referrer_id = ?", (user_id,))
@@ -573,8 +665,10 @@ async def show_referral(callback: CallbackQuery):
     cursor.execute("SELECT ref_bonus FROM users WHERE id = ?", (user_id,))
     bonus = cursor.fetchone()[0] or 0
     db.close()
+    
     link = f"https://t.me/Oksitocin_Shop_Bot?start={ref_code}"
     text = f"🎁 *Рефералка*\n👥 Приглашено: {count}\n💰 Заработано: {bonus} ₽\n🔑 Код: `{ref_code}`\n🔗 {link}"
+    
     await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([
         [InlineKeyboardButton(text="📋 Копировать", callback_data=f"copy_ref_{ref_code}")],
         [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_menu")]
