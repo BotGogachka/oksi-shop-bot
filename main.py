@@ -32,15 +32,16 @@ def health():
 @app.route('/crypto_webhook', methods=['GET', 'POST'])
 def crypto_webhook():
     if request.method == 'GET':
-        return "CryptoBot webhook is active", 200
+        return "✅ CryptoBot webhook is active", 200
     
     try:
         data = request.get_json()
-        logging.info(f"📩 Получен вебхук: {data}")
+        logging.info(f"📩 Получен вебхук от CryptoBot: {data}")
         
         if data and data.get('update_type') == 'invoice_paid':
             payload = data.get('payload', {})
             user_id_str = payload.get('payload', '')
+            
             if user_id_str.startswith('user_'):
                 user_id = int(user_id_str.split('_')[1])
                 amount_usd = float(payload.get('amount', 0))
@@ -54,7 +55,6 @@ def crypto_webhook():
                 
                 logging.info(f"✅ Начислено {amount_rub} ₽ пользователю {user_id}")
                 
-                # Уведомляем пользователя
                 try:
                     bot.send_message(
                         user_id,
@@ -77,8 +77,15 @@ def crypto_webhook():
 @app.route('/xrocket_webhook', methods=['GET', 'POST'])
 def xrocket_webhook():
     if request.method == 'GET':
-        return "xRocket webhook is active", 200
-    return "OK", 200
+        return "✅ xRocket webhook is active", 200
+    
+    try:
+        data = request.get_json()
+        logging.info(f"📩 Получен вебхук от xRocket: {data}")
+        return "OK", 200
+    except Exception as e:
+        logging.error(f"xRocket webhook error: {e}")
+        return "Error", 500
 
 # ============ БОТ ============
 bot = Bot(token=BOT_TOKEN)
@@ -86,6 +93,59 @@ dp = Dispatcher()
 
 def get_db():
     db_path = os.path.join(os.path.dirname(__file__), "shop.db")
+    
+    db = sqlite3.connect(db_path)
+    cursor = db.cursor()
+    
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY,
+            balance INTEGER DEFAULT 0,
+            join_date TEXT,
+            username TEXT
+        )
+    ''')
+    
+    cursor.execute("PRAGMA table_info(users)")
+    columns = [col[1] for col in cursor.fetchall()]
+    if "username" not in columns:
+        cursor.execute("ALTER TABLE users ADD COLUMN username TEXT")
+    
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS products (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT,
+            price INTEGER,
+            stock INTEGER,
+            image TEXT
+        )
+    ''')
+    
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS accounts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            product_id INTEGER,
+            data TEXT,
+            status TEXT DEFAULT 'available',
+            buyer_id INTEGER,
+            buy_date TEXT
+        )
+    ''')
+    
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS pending_payments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            invoice_id TEXT,
+            amount REAL,
+            system TEXT,
+            created_at TEXT,
+            status TEXT DEFAULT 'pending'
+        )
+    ''')
+    
+    db.commit()
+    db.close()
     return sqlite3.connect(db_path)
 
 # ============ КАРТИНКИ ============
@@ -190,12 +250,13 @@ async def create_cryptobot_invoice(user_id, amount_usd):
         logging.error(f"CryptoBot error: {e}")
         return {"success": False, "error": str(e)}
 
-# ============ XROCKET ============
+# ============ XROCKET (ИСПРАВЛЕННЫЙ URL) ============
 async def create_xrocket_invoice(user_id, amount_usd):
     try:
         amount_ton = amount_usd / 5.0
         
-        url = "https://pay.xrocket.tg/api/v1/invoices"
+        # ПРАВИЛЬНЫЙ URL ДЛЯ XROCKET
+        url = "https://pay.xrocket.tg/invoice"
         headers = {
             "Rocket-Pay-Key": XROCKET_API_KEY,
             "Content-Type": "application/json"
@@ -250,6 +311,7 @@ def back_button():
 @dp.message(Command("start"))
 async def start(message: Message):
     user_id = message.from_user.id
+    username = message.from_user.username or None
     
     args = message.text.split()
     ref_code = None
@@ -266,8 +328,8 @@ async def start(message: Message):
         join_date = datetime.now().strftime("%d.%m.%Y %H:%M")
         
         cursor.execute(
-            "INSERT INTO users (id, balance, join_date) VALUES (?, 0, ?)",
-            (user_id, join_date)
+            "INSERT INTO users (id, balance, join_date, username) VALUES (?, 0, ?, ?)",
+            (user_id, join_date, username)
         )
         db.commit()
         
@@ -801,14 +863,12 @@ async def process_cryptobot_amount(callback: CallbackQuery):
         )
         return
     
-    # ОТПРАВЛЯЕМ ССЫЛКУ НА ОПЛАТУ, УБИРАЕМ КНОПКУ ПРОВЕРКИ
     await callback.message.edit_text(
         f"✅ *Счёт создан!* ✅\n\n"
         f"💰 Сумма: {amount_rub} ₽\n"
         f"🔗 *Ссылка для оплаты:*\n"
         f"{result['pay_url']}\n\n"
-        f"📌 *Баланс начислится автоматически* после оплаты!\n"
-        f"⏳ Обычно это занимает 5-10 секунд.",
+        f"📌 После оплаты баланс начислится автоматически!",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🏠 В меню", callback_data="back_to_menu")]
