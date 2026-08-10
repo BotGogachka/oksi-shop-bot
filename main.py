@@ -95,7 +95,7 @@ def get_db():
     db.close()
     return sqlite3.connect(db_path)
 
-# ============ КАРТИНКИ (ТВОИ) ============
+# ============ КАРТИНКИ ============
 IMAGES = {
     "catalog": "AgACAgIAAxkBAANAanjppMpTjWFc4rcQiKkJKjs1DWQAAtQgaxsUCcFLeHo9lHj_7L0BAAMCAAN5AAM9BA",
     "profile": "AgACAgIAAxkBAAMuanjo9MPEBHbsMdTsFMSTRx7HM2QAAtAgaxsUCcFL8OQe0GwLGjoBAAMCAAN5AAM9BA",
@@ -209,47 +209,47 @@ async def create_xrocket_invoice(user_id, amount_usd):
     except Exception as e:
         return {"success": False, "error": str(e)}
 
-# ============ МЕНЮ (СЕТКА 2 КНОПКИ) ============
+# ============ МЕНЮ (ИСПРАВЛЕНЫ) ============
 def main_menu():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton("👤 Профиль", callback_data="profile"),
-         InlineKeyboardButton("🛍️ Маркет", callback_data="market")],
-        [InlineKeyboardButton("🎁 Рефералка", callback_data="referral"),
-         InlineKeyboardButton("🛠 Поддержка", callback_data="support")],
-        [InlineKeyboardButton("ℹ️ О нас", callback_data="info")]
+        [InlineKeyboardButton(text="👤 Профиль", callback_data="profile"),
+         InlineKeyboardButton(text="🛍️ Маркет", callback_data="market")],
+        [InlineKeyboardButton(text="🎁 Рефералка", callback_data="referral"),
+         InlineKeyboardButton(text="🛠 Поддержка", callback_data="support")],
+        [InlineKeyboardButton(text="ℹ️ О нас", callback_data="info")]
     ])
 
 def market_menu():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton("📱 Аккаунты", callback_data="category_accounts"),
-         InlineKeyboardButton("📦 Паки", callback_data="category_packs")],
-        [InlineKeyboardButton("🔌 Proxy", callback_data="category_proxy"),
-         InlineKeyboardButton("⭐ Premium", callback_data="category_premium")],
-        [InlineKeyboardButton("🌟 Telegram Stars", callback_data="category_stars")],
-        [InlineKeyboardButton("◀️ Назад", callback_data="back_to_menu")]
+        [InlineKeyboardButton(text="📱 Аккаунты", callback_data="category_accounts"),
+         InlineKeyboardButton(text="📦 Паки", callback_data="category_packs")],
+        [InlineKeyboardButton(text="🔌 Proxy", callback_data="category_proxy"),
+         InlineKeyboardButton(text="⭐ Premium", callback_data="category_premium")],
+        [InlineKeyboardButton(text="🌟 Telegram Stars", callback_data="category_stars")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_menu")]
     ])
 
 def profile_menu():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton("💰 Пополнить", callback_data="deposit"),
-         InlineKeyboardButton("📜 История", callback_data="my_accounts")],
-        [InlineKeyboardButton("📱 Мои акки", callback_data="my_accounts"),
-         InlineKeyboardButton("🔌 Мои прокси", callback_data="my_proxies")],
-        [InlineKeyboardButton("◀️ Назад", callback_data="back_to_menu")]
+        [InlineKeyboardButton(text="💰 Пополнить", callback_data="deposit"),
+         InlineKeyboardButton(text="📜 История", callback_data="my_accounts")],
+        [InlineKeyboardButton(text="📱 Мои акки", callback_data="my_accounts"),
+         InlineKeyboardButton(text="🔌 Мои прокси", callback_data="my_proxies")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_menu")]
     ])
 
 def deposit_menu():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton("💰 10 ₽", callback_data="cb_amount_10"),
-         InlineKeyboardButton("💰 50 ₽", callback_data="cb_amount_50")],
-        [InlineKeyboardButton("💰 100 ₽", callback_data="cb_amount_100"),
-         InlineKeyboardButton("💰 500 ₽", callback_data="cb_amount_500")],
-        [InlineKeyboardButton("◀️ Назад", callback_data="deposit")]
+        [InlineKeyboardButton(text="💰 10 ₽", callback_data="cb_amount_10"),
+         InlineKeyboardButton(text="💰 50 ₽", callback_data="cb_amount_50")],
+        [InlineKeyboardButton(text="💰 100 ₽", callback_data="cb_amount_100"),
+         InlineKeyboardButton(text="💰 500 ₽", callback_data="cb_amount_500")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="deposit")]
     ])
 
 def back_button():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton("◀️ Назад", callback_data="back_to_menu")]
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_menu")]
     ])
 
 # ============ СТАРТ ============
@@ -286,10 +286,9 @@ async def back_to_menu(callback: CallbackQuery):
 @dp.callback_query(lambda c: c.data == "market")
 async def show_market(callback: CallbackQuery):
     await callback.answer()
-    text = "🛍️ *Маркет*\n📂 Категории:\n👇 Выбери:"
-    await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=market_menu())
+    await callback.message.edit_text("🛍️ *Маркет*\n📂 Категории:\n👇 Выбери:", parse_mode="Markdown", reply_markup=market_menu())
 
-# ============ КАТЕГОРИИ (ИСПРАВЛЕНЫ) ============
+# ============ КАТЕГОРИИ ============
 @dp.callback_query(lambda c: c.data and c.data.startswith("category_"))
 async def show_category(callback: CallbackQuery):
     await callback.answer()
@@ -308,17 +307,17 @@ async def show_category(callback: CallbackQuery):
     db.close()
     if not products:
         await callback.message.edit_text(f"{cat_name}\n😔 Товаров пока нет", parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="market")]]))
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(text="◀️ Назад", callback_data="market")]]))
         return
     kb = InlineKeyboardMarkup(inline_keyboard=[])
     for p in products:
         kb.inline_keyboard.append([
-            InlineKeyboardButton(f"📌 {p[1]} — {p[2]} ₽ (осталось: {p[3]})", callback_data=f"view_{p[0]}")
+            InlineKeyboardButton(text=f"📌 {p[1]} — {p[2]} ₽ (осталось: {p[3]})", callback_data=f"view_{p[0]}")
         ])
-    kb.inline_keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="market")])
+    kb.inline_keyboard.append([InlineKeyboardButton(text="◀️ Назад", callback_data="market")])
     await callback.message.edit_text(f"{cat_name}\n👇 Нажми на товар:", parse_mode="Markdown", reply_markup=kb)
 
-# ============ ПРОСМОТР ТОВАРА (С КАРТИНКОЙ) ============
+# ============ ПРОСМОТР ТОВАРА ============
 @dp.callback_query(lambda c: c.data and c.data.startswith("view_"))
 async def view_product(callback: CallbackQuery):
     await callback.answer()
@@ -333,8 +332,8 @@ async def view_product(callback: CallbackQuery):
         return
     pid, name, price, stock, image = p
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton("🛒 Купить", callback_data=f"buy_{pid}")],
-        [InlineKeyboardButton("◀️ Назад", callback_data="market")]
+        [InlineKeyboardButton(text="🛒 Купить", callback_data=f"buy_{pid}")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="market")]
     ])
     caption = f"*{name}*\n💰 {price} ₽ | 📊 {stock} шт.\n✅ Гарантия 1 час"
     if image:
@@ -377,8 +376,10 @@ async def buy_product(callback: CallbackQuery):
         data_text += f"\n🔌 Proxy: `{proxy}`"
     await callback.message.edit_text(f"✅ *Куплено!*\n📌 {name}\n💰 -{price} ₽\n📝 `{data_text}`\n⚠️ Гарантия 1 час",
         parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛍️ В маркет", callback_data="market")],
-                                           [InlineKeyboardButton("🏠 В меню", callback_data="back_to_menu")]]))
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton(text="🛍️ В маркет", callback_data="market")],
+            [InlineKeyboardButton(text="🏠 В меню", callback_data="back_to_menu")]
+        ]))
 
 # ============ ПРОФИЛЬ ============
 @dp.callback_query(lambda c: c.data == "profile")
@@ -466,9 +467,9 @@ async def show_deposit(callback: CallbackQuery):
         "💰 *Пополнение*\n💳 CryptoBot\n🚀 xRocket\n👇 Выбери способ:",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("💳 CryptoBot", callback_data="deposit_cryptobot"),
-             InlineKeyboardButton("🚀 xRocket", callback_data="deposit_xrocket")],
-            [InlineKeyboardButton("◀️ Назад", callback_data="profile")]
+            [InlineKeyboardButton(text="💳 CryptoBot", callback_data="deposit_cryptobot"),
+             InlineKeyboardButton(text="🚀 xRocket", callback_data="deposit_xrocket")],
+            [InlineKeyboardButton(text="◀️ Назад", callback_data="profile")]
         ])
     )
 
@@ -492,12 +493,12 @@ async def process_cryptobot_amount(callback: CallbackQuery):
         f"✅ *Счёт создан!*\n💰 {amount_rub} ₽\n🔗 [Оплатить]({result['pay_url']})\n📌 После оплаты нажми «Проверить»",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("✅ Проверить", callback_data=f"check_cb_{result['invoice_id']}")],
-            [InlineKeyboardButton("◀️ Назад", callback_data="deposit")]
+            [InlineKeyboardButton(text="✅ Проверить", callback_data=f"check_cb_{result['invoice_id']}")],
+            [InlineKeyboardButton(text="◀️ Назад", callback_data="deposit")]
         ])
     )
 
-# ============ ПРОВЕРКА CRYPTOBOT (ИСПРАВЛЕНА) ============
+# ============ ПРОВЕРКА CRYPTOBOT ============
 @dp.callback_query(lambda c: c.data and c.data.startswith("check_cb_"))
 async def check_cryptobot_payment_handler(callback: CallbackQuery):
     await callback.answer()
@@ -517,8 +518,8 @@ async def check_cryptobot_payment_handler(callback: CallbackQuery):
         await callback.message.edit_text(f"✅ *Оплата прошла!* +{amount_rub} ₽", parse_mode="Markdown", reply_markup=main_menu())
     else:
         await callback.message.edit_text("⏳ Ещё не оплачено", reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔄 Проверить", callback_data=f"check_cb_{invoice_id}")],
-            [InlineKeyboardButton("◀️ Назад", callback_data="deposit")]
+            [InlineKeyboardButton(text="🔄 Проверить", callback_data=f"check_cb_{invoice_id}")],
+            [InlineKeyboardButton(text="◀️ Назад", callback_data="deposit")]
         ]))
 
 # ============ XROCKET ============
@@ -541,8 +542,8 @@ async def process_xrocket_amount(callback: CallbackQuery):
         f"✅ *Счёт создан!*\n💰 {amount_rub} ₽\n🔗 [Оплатить]({result['pay_url']})\n📌 После оплаты нажми «Проверить»",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("✅ Проверить", callback_data=f"check_xr_{result['invoice_id']}")],
-            [InlineKeyboardButton("◀️ Назад", callback_data="deposit")]
+            [InlineKeyboardButton(text="✅ Проверить", callback_data=f"check_xr_{result['invoice_id']}")],
+            [InlineKeyboardButton(text="◀️ Назад", callback_data="deposit")]
         ])
     )
 
@@ -554,8 +555,8 @@ async def check_xrocket_payment_handler(callback: CallbackQuery):
         "⏳ Проверка...\n📩 Напиши @YoungTrappa8122",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("📩 Написать", url="https://t.me/YoungTrappa8122")],
-            [InlineKeyboardButton("◀️ Назад", callback_data="deposit")]
+            [InlineKeyboardButton(text="📩 Написать", url="https://t.me/YoungTrappa8122")],
+            [InlineKeyboardButton(text="◀️ Назад", callback_data="deposit")]
         ])
     )
 
@@ -575,8 +576,8 @@ async def show_referral(callback: CallbackQuery):
     link = f"https://t.me/Oksitocin_Shop_Bot?start={ref_code}"
     text = f"🎁 *Рефералка*\n👥 Приглашено: {count}\n💰 Заработано: {bonus} ₽\n🔑 Код: `{ref_code}`\n🔗 {link}"
     await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([
-        [InlineKeyboardButton("📋 Копировать", callback_data=f"copy_ref_{ref_code}")],
-        [InlineKeyboardButton("◀️ Назад", callback_data="back_to_menu")]
+        [InlineKeyboardButton(text="📋 Копировать", callback_data=f"copy_ref_{ref_code}")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_menu")]
     ]))
 
 # ============ КОПИРОВАТЬ РЕФЕРАЛКУ ============
@@ -596,8 +597,8 @@ async def show_support(callback: CallbackQuery):
         "🛠 *Поддержка*\n📩 @YoungTrappa8122\n⏰ 24/7",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("📩 Написать", url="https://t.me/YoungTrappa8122")],
-            [InlineKeyboardButton("◀️ Назад", callback_data="back_to_menu")]
+            [InlineKeyboardButton(text="📩 Написать", url="https://t.me/YoungTrappa8122")],
+            [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_menu")]
         ])
     )
 
