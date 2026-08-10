@@ -22,7 +22,7 @@ ADMIN_ID = 8901845559
 CRYPTOBOT_TOKEN = "620260:AAPBw2V0DulWNwGOmKInLH926esMEySWgqa"
 XROCKET_API_KEY = "64acc4de748ed47a541bb3c47"
 
-# ============ FLASK ДЛЯ WEBHOOK ============
+# ============ FLASK ============
 app = Flask(__name__)
 
 @app.route('/')
@@ -56,13 +56,16 @@ def crypto_webhook():
                 logging.info(f"✅ Начислено {amount_rub} ₽ пользователю {user_id}")
                 
                 try:
-                    bot.send_message(
-                        user_id,
-                        f"✅ *Оплата подтверждена!* ✅\n\n"
-                        f"💰 Начислено: {amount_rub} ₽\n"
-                        f"📊 Проверьте баланс в профиле!\n"
-                        f"🌟 Спасибо за пополнение!",
-                        parse_mode="Markdown"
+                    asyncio.run_coroutine_threadsafe(
+                        bot.send_message(
+                            user_id,
+                            f"✅ *Оплата подтверждена!* ✅\n\n"
+                            f"💰 Начислено: {amount_rub} ₽\n"
+                            f"📊 Проверьте баланс в профиле!\n"
+                            f"🌟 Спасибо за пополнение!",
+                            parse_mode="Markdown"
+                        ),
+                        asyncio.get_event_loop()
                     )
                 except:
                     pass
@@ -117,7 +120,8 @@ def get_db():
             name TEXT,
             price INTEGER,
             stock INTEGER,
-            image TEXT
+            image TEXT,
+            category TEXT DEFAULT 'Аккаунты'
         )
     ''')
     
@@ -126,6 +130,7 @@ def get_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             product_id INTEGER,
             data TEXT,
+            proxy TEXT,
             status TEXT DEFAULT 'available',
             buyer_id INTEGER,
             buy_date TEXT
@@ -250,62 +255,37 @@ async def create_cryptobot_invoice(user_id, amount_usd):
         logging.error(f"CryptoBot error: {e}")
         return {"success": False, "error": str(e)}
 
-# ============ XROCKET (ИСПРАВЛЕННЫЙ URL) ============
-async def create_xrocket_invoice(user_id, amount_usd):
-    try:
-        amount_ton = amount_usd / 5.0
-        
-        # ПРАВИЛЬНЫЙ URL ДЛЯ XROCKET
-        url = "https://pay.xrocket.tg/invoice"
-        headers = {
-            "Rocket-Pay-Key": XROCKET_API_KEY,
-            "Content-Type": "application/json"
-        }
-        payload = {
-            "currency": "TON",
-            "amount": str(round(amount_ton, 2)),
-            "description": f"Пополнение баланса OksiShop",
-            "expiresIn": 3600
-        }
-        
-        logging.info(f"📤 xRocket запрос: {payload}")
-        
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, headers=headers, json=payload) as resp:
-                data = await resp.json()
-                logging.info(f"📥 xRocket ответ: {data}")
-                
-                if data.get("status") == "success":
-                    invoice = data.get("data", {})
-                    return {
-                        "success": True,
-                        "invoice_id": invoice.get("invoiceId"),
-                        "pay_url": invoice.get("link"),
-                        "amount": amount_usd
-                    }
-                else:
-                    return {"success": False, "error": data.get("error", "Unknown error")}
-    except Exception as e:
-        logging.error(f"xRocket error: {e}")
-        return {"success": False, "error": str(e)}
-
-# ============ ГЛАВНОЕ МЕНЮ ============
+# ============ ГЛАВНОЕ МЕНЮ (КАК В SWIFT SHOP) ============
 def main_menu():
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📦 Каталог товаров", callback_data="catalog")],
-        [InlineKeyboardButton(text="👤 Мой профиль", callback_data="profile")],
-        [InlineKeyboardButton(text="📱 Мои покупки", callback_data="my_accounts")],
-        [InlineKeyboardButton(text="💰 Пополнить баланс", callback_data="deposit")],
-        [InlineKeyboardButton(text="🎁 Реферальная система", callback_data="referral")],
-        [InlineKeyboardButton(text="🛠 Техподдержка", callback_data="support")],
-        [InlineKeyboardButton(text="❓ Помощь и FAQ", callback_data="help")]
+        [InlineKeyboardButton(text="👤 Профиль", callback_data="profile")],
+        [InlineKeyboardButton(text="📦 Маркет", callback_data="market")],
+        [InlineKeyboardButton(text="ℹ️ Информация", callback_data="info")],
     ])
     return keyboard
 
-def back_button():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")]
+def market_menu():
+    """Разделы товаров Маркета"""
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📱 Аккаунты", callback_data="category_accounts")],
+        [InlineKeyboardButton(text="📦 Паки", callback_data="category_packs")],
+        [InlineKeyboardButton(text="🔌 Proxy", callback_data="category_proxy")],
+        [InlineKeyboardButton(text="⭐ Premium", callback_data="category_premium")],
+        [InlineKeyboardButton(text="🌟 Telegram Stars", callback_data="category_stars")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu")]
     ])
+    return keyboard
+
+def profile_menu():
+    """Кнопки в профиле"""
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💰 Пополнить", callback_data="deposit")],
+        [InlineKeyboardButton(text="📜 История", callback_data="my_accounts")],
+        [InlineKeyboardButton(text="📱 Мои аккаунты", callback_data="my_accounts")],
+        [InlineKeyboardButton(text="🔌 Мои прокси", callback_data="my_proxies")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu")]
+    ])
+    return keyboard
 
 # ============ СТАРТ ============
 @dp.message(Command("start"))
@@ -349,20 +329,19 @@ async def start(message: Message):
 {bonus_text}
 
 🔥 *Лучшие аккаунты по лучшим ценам!*
+📌 *В наличии:*
+✅ Чистые аккаунты
+✅ Теневые аккаунты
+✅ Premium аккаунты
+✅ Proxy
 
-👇 *Нажми на кнопку ниже, чтобы начать!*
+👇 *Выберите действие в меню:*
         """
         
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🛒 За покупками!", callback_data="enter_shop")],
-            [InlineKeyboardButton(text="❓ Что это?", callback_data="help")]
-        ])
-        
-        await message.answer_photo(
-            photo=IMAGES["welcome"],
-            caption=welcome_text,
+        await message.answer(
+            welcome_text,
             parse_mode="Markdown",
-            reply_markup=keyboard
+            reply_markup=main_menu()
         )
     else:
         db.close()
@@ -373,74 +352,87 @@ async def start(message: Message):
 👇 *Выберите действие в меню:*
         """
         
-        await message.answer_photo(
-            photo=IMAGES["welcome"],
-            caption=welcome_back_text,
+        await message.answer(
+            welcome_back_text,
             parse_mode="Markdown",
             reply_markup=main_menu()
         )
 
-# ============ ВХОД В МАГАЗИН ============
-@dp.callback_query(lambda c: c.data == "enter_shop")
-async def enter_shop(callback: CallbackQuery):
+# ============ НАЗАД ============
+@dp.callback_query(lambda c: c.data == "back_to_menu")
+async def back_to_menu(callback: CallbackQuery):
     try:
         await callback.answer()
     except:
         pass
     
-    shop_text = """
-🛍️ *ДОБРО ПОЖАЛОВАТЬ В МАГАЗИН!* 🛍️
-
-Выберите действие в меню ниже 👇
-
-━━━━━━━━━━━━━━━━━━━
-📦 *Каталог* — посмотреть ассортимент
-👤 *Профиль* — проверить баланс
-📱 *Мои покупки* — история покупок
-💰 *Пополнить* — пополнить баланс криптой
-🎁 *Рефералка* — приглашай друзей
-🛠 *Поддержка* — помощь и контакты
-❓ *Помощь* — ответы на вопросы
-━━━━━━━━━━━━━━━━━━━
-"""
-    
-    await callback.message.delete()
-    await callback.message.answer_photo(
-        photo=IMAGES["enter_shop"],
-        caption=shop_text,
+    await callback.message.edit_text(
+        "🌟 *ГЛАВНОЕ МЕНЮ* 🌟\n\n"
+        "👇 *Выберите действие:*",
         parse_mode="Markdown",
         reply_markup=main_menu()
     )
 
-# ============ КАТАЛОГ ============
-@dp.callback_query(lambda c: c.data == "catalog")
-async def show_catalog(callback: CallbackQuery):
+# ============ МАРКЕТ ============
+@dp.callback_query(lambda c: c.data == "market")
+async def show_market(callback: CallbackQuery):
     try:
         await callback.answer()
     except:
         pass
     
+    market_text = """
+📦 *РАЗДЕЛЫ ТОВАРОВ МАРКЕТА* 📦
+
+Выберите категорию:
+
+📱 *Аккаунты* — соцсети, игры, почты
+📦 *Паки* — готовые наборы аккаунтов
+🔌 *Proxy* — анонимные прокси-серверы
+⭐ *Premium* — премиум аккаунты
+🌟 *Telegram Stars* — звёзды для Telegram
+"""
+    
+    await callback.message.edit_text(
+        market_text,
+        parse_mode="Markdown",
+        reply_markup=market_menu()
+    )
+
+# ============ КАТЕГОРИИ ============
+@dp.callback_query(lambda c: c.data and c.data.startswith("category_"))
+async def show_category(callback: CallbackQuery):
+    try:
+        await callback.answer()
+    except:
+        pass
+    
+    category_names = {
+        "category_accounts": "📱 Аккаунты",
+        "category_packs": "📦 Паки",
+        "category_proxy": "🔌 Proxy",
+        "category_premium": "⭐ Premium",
+        "category_stars": "🌟 Telegram Stars"
+    }
+    
+    category_name = category_names.get(callback.data, "Категория")
+    category_key = callback.data.split("_")[1]
+    
     db = get_db()
     cursor = db.cursor()
-    
-    cursor.execute("PRAGMA table_info(products)")
-    columns = [col[1] for col in cursor.fetchall()]
-    
-    if "image" in columns:
-        cursor.execute("SELECT id, name, price, stock, image FROM products WHERE stock > 0")
-        products = cursor.fetchall()
-    else:
-        cursor.execute("SELECT id, name, price, stock FROM products WHERE stock > 0")
-        products = [(p[0], p[1], p[2], p[3], None) for p in cursor.fetchall()]
+    cursor.execute("SELECT id, name, price, stock, image FROM products WHERE category = ? AND stock > 0", (category_key,))
+    products = cursor.fetchall()
     db.close()
     
     if not products:
-        await callback.message.delete()
-        await callback.message.answer_photo(
-            photo=IMAGES["catalog"],
-            caption="😔 *К сожалению, товаров нет в наличии!*\n\n🔄 Загляните позже — мы постоянно обновляем ассортимент!",
+        await callback.message.edit_text(
+            f"{category_name}\n\n"
+            "😔 *Товаров в этой категории пока нет!*\n"
+            "🔄 Загляните позже — мы постоянно обновляем ассортимент.",
             parse_mode="Markdown",
-            reply_markup=back_button()
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔙 Назад в маркет", callback_data="market")]
+            ])
         )
         return
     
@@ -453,18 +445,11 @@ async def show_catalog(callback: CallbackQuery):
                 callback_data=f"view_{product_id}"
             )
         ])
-    keyboard.inline_keyboard.append([InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")])
+    keyboard.inline_keyboard.append([InlineKeyboardButton(text="🔙 Назад в маркет", callback_data="market")])
     
-    caption = """
-📦 *КАТАЛОГ ТОВАРОВ* 📦
-
-👇 *Нажмите на товар, чтобы посмотреть подробности:*
-"""
-    
-    await callback.message.delete()
-    await callback.message.answer_photo(
-        photo=IMAGES["catalog"],
-        caption=caption,
+    await callback.message.edit_text(
+        f"{category_name}\n\n"
+        "👇 *Нажмите на товар для просмотра:*",
         parse_mode="Markdown",
         reply_markup=keyboard
     )
@@ -481,16 +466,8 @@ async def view_product(callback: CallbackQuery):
     
     db = get_db()
     cursor = db.cursor()
-    cursor.execute("PRAGMA table_info(products)")
-    columns = [col[1] for col in cursor.fetchall()]
-    
-    if "image" in columns:
-        cursor.execute("SELECT id, name, price, stock, image FROM products WHERE id = ?", (product_id,))
-        product = cursor.fetchone()
-    else:
-        cursor.execute("SELECT id, name, price, stock FROM products WHERE id = ?", (product_id,))
-        p = cursor.fetchone()
-        product = (p[0], p[1], p[2], p[3], None) if p else None
+    cursor.execute("SELECT id, name, price, stock, image FROM products WHERE id = ?", (product_id,))
+    product = cursor.fetchone()
     db.close()
     
     if not product:
@@ -504,7 +481,7 @@ async def view_product(callback: CallbackQuery):
     
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🛒 Купить сейчас", callback_data=f"buy_{product_id}")],
-        [InlineKeyboardButton(text="🔙 Назад в каталог", callback_data="catalog")]
+        [InlineKeyboardButton(text="🔙 Назад в каталог", callback_data="market")]
     ])
     
     caption = f"""
@@ -563,14 +540,14 @@ async def buy_product(callback: CallbackQuery):
             f"💰 Цена: {price} ₽\n"
             f"💳 Ваш баланс: {balance} ₽\n"
             f"📊 Не хватает: {price - balance} ₽\n\n"
-            f"💰 Пополните баланс в главном меню!",
+            f"💰 Пополните баланс в профиле!",
             parse_mode="Markdown",
             reply_markup=back_button()
         )
         db.close()
         return
     
-    cursor.execute("SELECT id, data FROM accounts WHERE product_id = ? AND status = 'available' LIMIT 1", (product_id,))
+    cursor.execute("SELECT id, data, proxy FROM accounts WHERE product_id = ? AND status = 'available' LIMIT 1", (product_id,))
     acc = cursor.fetchone()
     
     if not acc:
@@ -583,7 +560,7 @@ async def buy_product(callback: CallbackQuery):
         db.close()
         return
     
-    acc_id, acc_data = acc
+    acc_id, acc_data, acc_proxy = acc
     
     cursor.execute("UPDATE users SET balance = balance - ? WHERE id = ?", (price, user_id))
     cursor.execute("UPDATE accounts SET status = 'sold', buyer_id = ?, buy_date = ? WHERE id = ?", 
@@ -591,13 +568,17 @@ async def buy_product(callback: CallbackQuery):
     db.commit()
     db.close()
     
+    # Формируем данные для выдачи
+    data_text = f"📝 Данные: `{acc_data}`"
+    if acc_proxy:
+        data_text += f"\n🔌 Proxy: `{acc_proxy}`"
+    
     await callback.message.edit_text(
         f"✅ *ПОКУПКА УСПЕШНА!* ✅\n\n"
         f"📌 Товар: {name}\n"
         f"💰 Списано: {price} ₽\n"
         f"⏰ Время покупки: {datetime.now().strftime('%d.%m.%Y %H:%M')}\n\n"
-        f"📝 *Данные аккаунта:*\n"
-        f"`{acc_data}`\n\n"
+        f"{data_text}\n\n"
         f"⚠️ *ВАЖНО:*\n"
         f"⏳ Гарантия 1 час с момента получения\n"
         f"🔒 Проверьте данные сразу!\n"
@@ -605,7 +586,7 @@ async def buy_product(callback: CallbackQuery):
         f"🌟 Спасибо за покупку! Ждём вас снова!",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📦 В каталог", callback_data="catalog")],
+            [InlineKeyboardButton(text="📦 В маркет", callback_data="market")],
             [InlineKeyboardButton(text="🏠 В меню", callback_data="back_to_menu")]
         ])
     )
@@ -619,7 +600,6 @@ async def show_profile(callback: CallbackQuery):
         pass
     
     user_id = callback.from_user.id
-    is_admin = (user_id == ADMIN_ID)
     username = f"@{callback.from_user.username}" if callback.from_user.username else "не указан"
     
     db = get_db()
@@ -632,12 +612,14 @@ async def show_profile(callback: CallbackQuery):
         balance, join_date = 0, "Неизвестно"
     db.close()
     
+    # Считаем количество покупок
     db = get_db()
     cursor = db.cursor()
     cursor.execute("SELECT COUNT(*) FROM accounts WHERE status = 'sold' AND buyer_id = ?", (user_id,))
     total_bought = cursor.fetchone()[0]
     db.close()
     
+    # Считаем потраченную сумму
     db = get_db()
     cursor = db.cursor()
     cursor.execute("""
@@ -649,135 +631,37 @@ async def show_profile(callback: CallbackQuery):
     total_spent = cursor.fetchone()[0] or 0
     db.close()
     
-    db = get_db()
-    cursor = db.cursor()
-    cursor.execute("SELECT COUNT(*) FROM users WHERE referrer_id = ?", (user_id,))
-    referrals = cursor.fetchone()[0]
-    cursor.execute("SELECT ref_bonus FROM users WHERE id = ?", (user_id,))
-    ref_bonus = cursor.fetchone()[0] or 0
-    db.close()
+    # Определяем статус
+    if total_spent >= 5000:
+        status = "👑 VIP клиент"
+    elif total_spent >= 1000:
+        status = "💎 Постоянный клиент"
+    elif total_bought >= 5:
+        status = "🌟 Активный покупатель"
+    else:
+        status = "🆕 Пользователь"
     
-    caption = f"""
-👤 *МОЙ ПРОФИЛЬ* 👤
+    profile_text = f"""
+🔍 *ПРОФИЛЬ ПОЛЬЗОВАТЕЛЯ* 🔍
 ━━━━━━━━━━━━━━━━━━━
 
-👤 *Имя:* {callback.from_user.full_name}
-🆔 *Юзернейм:* {username}
+👤 *Юзернейм:* {username}
 📅 *Дата регистрации:* {join_date}
 
 ━━━━━━━━━━━━━━━━━━━
 💰 *БАЛАНС:* {balance} ₽
+📊 *Статус:* {status}
+📦 *Покупок:* {total_bought}
+💳 *Потрачено:* {total_spent} ₽
 ━━━━━━━━━━━━━━━━━━━
-
-📊 *СТАТИСТИКА:*
-📦 Куплено аккаунтов: {total_bought}
-💳 Потрачено всего: {total_spent} ₽
-👥 Приглашено друзей: {referrals}
-🎁 Заработано с рефералов: {ref_bonus} ₽
-
-━━━━━━━━━━━━━━━━━━━
-
-🌟 *Статус:* 
-{"👑 VIP клиент!" if total_spent >= 500 else "🆕 Новый клиент" if total_bought == 0 else "💎 Постоянный клиент"}
 
 📩 По вопросам: @YoungTrappa8122
 """
     
-    keyboard_buttons = [
-        [InlineKeyboardButton(text="💰 Пополнить баланс", callback_data="deposit")],
-        [InlineKeyboardButton(text="📱 Мои покупки", callback_data="my_accounts")],
-    ]
-    
-    if is_admin:
-        keyboard_buttons.append(
-            [InlineKeyboardButton(text="👑 Выдать баланс", callback_data="admin_add_balance")]
-        )
-    
-    keyboard_buttons.append([InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")])
-    
-    keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
-    
-    await callback.message.delete()
-    await callback.message.answer_photo(
-        photo=IMAGES["profile"],
-        caption=caption,
+    await callback.message.edit_text(
+        profile_text,
         parse_mode="Markdown",
-        reply_markup=keyboard
-    )
-
-# ============ АДМИН: ВЫДАТЬ БАЛАНС ============
-@dp.callback_query(lambda c: c.data == "admin_add_balance")
-async def admin_add_balance_menu(callback: CallbackQuery):
-    if callback.from_user.id != ADMIN_ID:
-        await callback.answer("⛔ Доступ запрещен", show_alert=True)
-        return
-    
-    await callback.answer()
-    await callback.message.answer(
-        "👑 *Выдача баланса*\n\n"
-        "Напишите сумму, которую хотите выдать:\n"
-        "`/add @username 100` — по юзернейму\n"
-        "`/add 123456789 100` — по ID\n\n"
-        "Пример: `/add @YoungTrappa8122 100`",
-        parse_mode="Markdown"
-    )
-
-# ============ МОИ ПОКУПКИ ============
-@dp.callback_query(lambda c: c.data == "my_accounts")
-async def show_my_accounts(callback: CallbackQuery):
-    try:
-        await callback.answer()
-    except:
-        pass
-    
-    user_id = callback.from_user.id
-    
-    db = get_db()
-    cursor = db.cursor()
-    cursor.execute("""
-        SELECT p.name, a.data, a.buy_date, p.price
-        FROM accounts a 
-        JOIN products p ON a.product_id = p.id 
-        WHERE a.status = 'sold' AND a.buyer_id = ?
-        ORDER BY a.id DESC 
-        LIMIT 10
-    """, (user_id,))
-    accounts = cursor.fetchall()
-    db.close()
-    
-    if not accounts:
-        await callback.message.delete()
-        await callback.message.answer_photo(
-            photo=IMAGES["my_accounts"],
-            caption="📭 *У вас пока нет купленных аккаунтов!*\n\n🛒 Перейдите в раздел «Каталог» и сделайте свою первую покупку! 🚀",
-            parse_mode="Markdown",
-            reply_markup=back_button()
-        )
-        return
-    
-    text = "📱 *МОИ ПОКУПКИ* 📱\n"
-    text += "━━━━━━━━━━━━━━━━━━━\n"
-    text += f"📊 Всего: {len(accounts)} (последние 10)\n\n"
-    
-    for idx, acc in enumerate(accounts, 1):
-        text += f"🔹 *{idx}. {acc[0]}*\n"
-        text += f"📝 Данные: `{acc[1]}`\n"
-        text += f"💰 Цена: {acc[3]} ₽\n"
-        text += f"⏰ Куплен: {acc[2]}\n\n"
-    
-    text += "━━━━━━━━━━━━━━━━━━━\n"
-    text += "⚠️ *Напоминание:*\n"
-    text += "⏳ Гарантия 1 час с момента покупки\n"
-    text += "📩 При проблемах: @YoungTrappa8122"
-    
-    keyboard = back_button()
-    
-    await callback.message.delete()
-    await callback.message.answer_photo(
-        photo=IMAGES["my_accounts"],
-        caption=text,
-        parse_mode="Markdown",
-        reply_markup=keyboard
+        reply_markup=profile_menu()
     )
 
 # ============ ПОПОЛНЕНИЕ БАЛАНСА ============
@@ -796,33 +680,26 @@ async def show_deposit(callback: CallbackQuery):
 
 💳 *CryptoBot* — быстрая оплата в криптовалюте
 🚀 *xRocket* — оплата через TON
-
-👇 *Нажмите на кнопку ниже, чтобы выбрать способ:*
 """
     
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💳 CryptoBot", callback_data="deposit_cryptobot")],
         [InlineKeyboardButton(text="🚀 xRocket", callback_data="deposit_xrocket")],
-        [InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")]
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="profile")]
     ])
     
-    await callback.message.delete()
-    await callback.message.answer_photo(
-        photo=IMAGES["deposit"],
-        caption=caption,
+    await callback.message.edit_text(
+        caption,
         parse_mode="Markdown",
         reply_markup=keyboard
     )
 
-# ============ CRYPTOBOT ============
 @dp.callback_query(lambda c: c.data == "deposit_cryptobot")
 async def deposit_cryptobot(callback: CallbackQuery):
     try:
         await callback.answer()
     except:
         pass
-    
-    await callback.message.delete()
     
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💰 10 ₽", callback_data="cb_amount_10")],
@@ -832,9 +709,10 @@ async def deposit_cryptobot(callback: CallbackQuery):
         [InlineKeyboardButton(text="🔙 Назад", callback_data="deposit")]
     ])
     
-    await callback.message.answer(
+    await callback.message.edit_text(
         "💰 *CryptoBot — выберите сумму пополнения:*\n\n"
-        "Минимальная сумма: 10 ₽",
+        "Минимальная сумма: 10 ₽\n"
+        "💡 После оплаты баланс начислится автоматически!",
         parse_mode="Markdown",
         reply_markup=keyboard
     )
@@ -868,14 +746,14 @@ async def process_cryptobot_amount(callback: CallbackQuery):
         f"💰 Сумма: {amount_rub} ₽\n"
         f"🔗 *Ссылка для оплаты:*\n"
         f"{result['pay_url']}\n\n"
-        f"📌 После оплаты баланс начислится автоматически!",
+        f"📌 После оплаты баланс начислится автоматически.\n"
+        f"⏳ Обычно это занимает 5-10 секунд.",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🏠 В меню", callback_data="back_to_menu")]
         ])
     )
 
-# ============ XROCKET ============
 @dp.callback_query(lambda c: c.data == "deposit_xrocket")
 async def deposit_xrocket(callback: CallbackQuery):
     try:
@@ -883,230 +761,162 @@ async def deposit_xrocket(callback: CallbackQuery):
     except:
         pass
     
-    await callback.message.delete()
-    
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🚀 10 ₽", callback_data="xr_amount_10")],
-        [InlineKeyboardButton(text="🚀 50 ₽", callback_data="xr_amount_50")],
-        [InlineKeyboardButton(text="🚀 100 ₽", callback_data="xr_amount_100")],
-        [InlineKeyboardButton(text="🚀 500 ₽", callback_data="xr_amount_500")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="deposit")]
-    ])
-    
-    await callback.message.answer(
-        "🚀 *xRocket — выберите сумму пополнения:*\n\n"
-        "Минимальная сумма: 10 ₽\n"
-        "Оплата в TON (1 TON ≈ 5 USD)",
+    await callback.message.edit_text(
+        "🚀 *xRocket*\n\n"
+        "Функция пополнения через xRocket в разработке.\n"
+        "Пожалуйста, используйте CryptoBot для пополнения.",
         parse_mode="Markdown",
-        reply_markup=keyboard
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="deposit")]
+        ])
     )
 
-@dp.callback_query(lambda c: c.data and c.data.startswith("xr_amount_"))
-async def process_xrocket_amount(callback: CallbackQuery):
+# ============ МОИ АККАУНТЫ / ИСТОРИЯ ============
+@dp.callback_query(lambda c: c.data == "my_accounts")
+async def show_my_accounts(callback: CallbackQuery):
     try:
         await callback.answer()
     except:
         pass
     
-    amount_rub = float(callback.data.split("_")[2])
-    amount_usd = amount_rub / 100
     user_id = callback.from_user.id
     
-    result = await create_xrocket_invoice(user_id, amount_usd)
+    db = get_db()
+    cursor = db.cursor()
+    cursor.execute("""
+        SELECT p.name, a.data, a.proxy, a.buy_date, p.price
+        FROM accounts a 
+        JOIN products p ON a.product_id = p.id 
+        WHERE a.status = 'sold' AND a.buyer_id = ?
+        ORDER BY a.id DESC 
+        LIMIT 10
+    """, (user_id,))
+    accounts = cursor.fetchall()
+    db.close()
     
-    if not result["success"]:
+    if not accounts:
         await callback.message.edit_text(
-            f"❌ *Ошибка создания счета:*\n{result['error']}\n\n"
-            "Попробуйте позже.",
+            "📭 *У вас пока нет купленных аккаунтов!*\n\n"
+            "🛒 Перейдите в раздел «Маркет» и сделайте свою первую покупку! 🚀",
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="🔙 Назад", callback_data="deposit")]
+                [InlineKeyboardButton(text="🔙 Назад", callback_data="profile")]
             ])
         )
         return
     
+    text = "📜 *ИСТОРИЯ ПОКУПОК* 📜\n"
+    text += "━━━━━━━━━━━━━━━━━━━\n"
+    text += f"📊 Последние {len(accounts)} покупок\n\n"
+    
+    for idx, acc in enumerate(accounts, 1):
+        text += f"🔹 *{idx}. {acc[0]}*\n"
+        text += f"📝 Данные: `{acc[1]}`\n"
+        if acc[2]:
+            text += f"🔌 Proxy: `{acc[2]}`\n"
+        text += f"💰 Цена: {acc[4]} ₽\n"
+        text += f"⏰ Куплен: {acc[3]}\n\n"
+    
+    text += "━━━━━━━━━━━━━━━━━━━\n"
+    text += "⚠️ *Напоминание:*\n"
+    text += "⏳ Гарантия 1 час с момента покупки\n"
+    text += "📩 При проблемах: @YoungTrappa8122"
+    
     await callback.message.edit_text(
-        f"✅ *Счёт создан!* ✅\n\n"
-        f"💰 Сумма: {amount_rub} ₽\n"
-        f"🔗 *Ссылка для оплаты:*\n"
-        f"{result['pay_url']}\n\n"
-        f"📌 После оплаты нажмите «Проверить оплату»",
+        text,
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Проверить оплату", callback_data=f"check_xr_{result['invoice_id']}")],
-            [InlineKeyboardButton(text="🏠 В меню", callback_data="back_to_menu")]
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="profile")]
         ])
     )
 
-@dp.callback_query(lambda c: c.data and c.data.startswith("check_xr_"))
-async def check_xrocket_payment_handler(callback: CallbackQuery):
-    try:
-        await callback.answer()
-    except:
-        pass
-    
-    await callback.message.edit_text(
-        "⏳ *Проверка оплаты...*\n\n"
-        "Функция автоматической проверки для xRocket в разработке.\n"
-        "Пожалуйста, свяжитесь с админом для ручного пополнения: @YoungTrappa8122",
-        parse_mode="Markdown",
-        reply_markup=back_button()
-    )
-
-# ============ РЕФЕРАЛЬНАЯ СИСТЕМА ============
-@dp.callback_query(lambda c: c.data == "referral")
-async def show_referral(callback: CallbackQuery):
+# ============ МОИ ПРОКСИ ============
+@dp.callback_query(lambda c: c.data == "my_proxies")
+async def show_my_proxies(callback: CallbackQuery):
     try:
         await callback.answer()
     except:
         pass
     
     user_id = callback.from_user.id
-    ref_code = get_or_create_ref_code(user_id)
     
     db = get_db()
     cursor = db.cursor()
-    cursor.execute("SELECT COUNT(*) FROM users WHERE referrer_id = ?", (user_id,))
-    referrals_count = cursor.fetchone()[0]
-    cursor.execute("SELECT ref_bonus FROM users WHERE id = ?", (user_id,))
-    ref_bonus = cursor.fetchone()[0] or 0
+    cursor.execute("""
+        SELECT data, proxy, buy_date
+        FROM accounts 
+        WHERE status = 'sold' AND buyer_id = ? AND proxy IS NOT NULL AND proxy != ''
+        ORDER BY id DESC 
+        LIMIT 10
+    """, (user_id,))
+    proxies = cursor.fetchall()
     db.close()
     
-    bot_username = "Oksitocin_Shop_Bot"
-    ref_link = f"https://t.me/{bot_username}?start={ref_code}"
+    if not proxies:
+        await callback.message.edit_text(
+            "🔌 *Мои прокси*\n\n"
+            "📭 У вас пока нет купленных прокси!",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔙 Назад", callback_data="profile")]
+            ])
+        )
+        return
     
-    caption = f"""
-🎁 *РЕФЕРАЛЬНАЯ СИСТЕМА* 🎁
+    text = "🔌 *МОИ ПРОКСИ* 🔌\n"
+    text += "━━━━━━━━━━━━━━━━━━━\n\n"
+    
+    for idx, (data, proxy, buy_date) in enumerate(proxies, 1):
+        text += f"🔹 *{idx}.*\n"
+        text += f"📝 Данные: `{data}`\n"
+        text += f"🔌 Proxy: `{proxy}`\n"
+        text += f"⏰ Куплен: {buy_date}\n\n"
+    
+    await callback.message.edit_text(
+        text,
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="profile")]
+        ])
+    )
+
+# ============ ИНФОРМАЦИЯ ============
+@dp.callback_query(lambda c: c.data == "info")
+async def show_info(callback: CallbackQuery):
+    try:
+        await callback.answer()
+    except:
+        pass
+    
+    info_text = """
+ℹ️ *О МАГАЗИНЕ* ℹ️
 ━━━━━━━━━━━━━━━━━━━
 
-👥 *Приглашайте друзей и получайте бонусы!*
+📌 *OksiShop* — это удобный инструмент для тех, кто ценит скорость, анонимность и стабильность.
 
-💰 *Бонус за приглашение:* 10 ₽
+✅ *Что мы предлагаем:*
+• Качественные аккаунты
+• Быстрая автоматическая выдача
+• Гарантия 1 час
+• Поддержка 24/7
 
-📊 *Ваша статистика:*
-👤 Приглашено: {referrals_count} чел.
-💰 Заработано: {ref_bonus} ₽
-🔑 Ваш код: `{ref_code}`
+💰 *Оплата:*
+• CryptoBot (USDT, TON, BTC, ETH)
 
-🔗 *Ваша реферальная ссылка:*
-`{ref_link}`
+📩 *Поддержка:* @YoungTrappa8122
 
-📌 *Как это работает:*
-1️⃣ Отправьте ссылку другу
-2️⃣ Он переходит и регистрируется
-3️⃣ Вы получаете 10 ₽ на баланс!
+🌟 *Приятных покупок!*
 """
     
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📋 Скопировать ссылку", callback_data=f"copy_ref_{ref_code}")],
-        [InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")]
-    ])
-    
-    await callback.message.delete()
-    await callback.message.answer_photo(
-        photo=IMAGES["referral"],
-        caption=caption,
+    await callback.message.edit_text(
+        info_text,
         parse_mode="Markdown",
-        reply_markup=keyboard
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")]
+        ])
     )
 
-# ============ КОПИРОВАТЬ РЕФЕРАЛКУ ============
-@dp.callback_query(lambda c: c.data and c.data.startswith("copy_ref_"))
-async def copy_referral(callback: CallbackQuery):
-    try:
-        await callback.answer()
-    except:
-        pass
-    
-    ref_code = callback.data.split("_")[2]
-    bot_username = "Oksitocin_Shop_Bot"
-    ref_link = f"https://t.me/{bot_username}?start={ref_code}"
-    
-    await callback.message.answer(
-        f"🔗 *Ваша реферальная ссылка:*\n\n"
-        f"`{ref_link}`\n\n"
-        f"📋 Нажмите на ссылку, чтобы скопировать её.",
-        parse_mode="Markdown"
-    )
-    await callback.answer("Ссылка отправлена!")
-
-# ============ ТЕХПОДДЕРЖКА ============
-@dp.callback_query(lambda c: c.data == "support")
-async def show_support(callback: CallbackQuery):
-    try:
-        await callback.answer()
-    except:
-        pass
-    
-    caption = """
-🛠 *ТЕХНИЧЕСКАЯ ПОДДЕРЖКА* 🛠
-━━━━━━━━━━━━━━━━━━━
-
-📩 *Связь:* @YoungTrappa8122
-⏰ *Время ответа:* 5-15 минут
-"""
-    
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📩 Связаться", url="https://t.me/YoungTrappa8122")],
-        [InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_to_menu")]
-    ])
-    
-    await callback.message.delete()
-    await callback.message.answer_photo(
-        photo=IMAGES["support"],
-        caption=caption,
-        parse_mode="Markdown",
-        reply_markup=keyboard
-    )
-
-# ============ ПОМОЩЬ ============
-@dp.callback_query(lambda c: c.data == "help")
-async def show_help(callback: CallbackQuery):
-    try:
-        await callback.answer()
-    except:
-        pass
-    
-    help_text = """
-❓ *ПОМОЩЬ И FAQ* ❓
-━━━━━━━━━━━━━━━━━━━
-
-📌 *КАК КУПИТЬ АККАУНТ:*
-
-1️⃣ *Пополните баланс* через CryptoBot или xRocket
-2️⃣ *Выберите товар* в каталоге
-3️⃣ *Нажмите «Купить»* — данные придут сразу!
-
-━━━━━━━━━━━━━━━━━━━
-
-⏳ *ГАРАНТИЯ:* 1 час на проверку
-📩 *ПОДДЕРЖКА:* @YoungTrappa8122
-"""
-    
-    await callback.message.delete()
-    await callback.message.answer(
-        help_text,
-        parse_mode="Markdown",
-        reply_markup=back_button()
-    )
-
-# ============ НАЗАД В МЕНЮ ============
-@dp.callback_query(lambda c: c.data == "back_to_menu")
-async def back_to_menu(callback: CallbackQuery):
-    try:
-        await callback.answer()
-    except:
-        pass
-    
-    await callback.message.delete()
-    await callback.message.answer(
-        "🌟 *ГЛАВНОЕ МЕНЮ* 🌟\n\n"
-        "👇 *Выберите действие:*",
-        parse_mode="Markdown",
-        reply_markup=main_menu()
-    )
-
-# ============ АДМИН: ПОПОЛНЕНИЕ БАЛАНСА ============
+# ============ КОМАНДА АДМИНА ============
 @dp.message(Command("add"))
 async def add_balance(message: Message):
     if message.from_user.id != ADMIN_ID:
