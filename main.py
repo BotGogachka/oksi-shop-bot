@@ -55,15 +55,14 @@ def crypto_webhook():
                 
                 logging.info(f"✅ Начислено {amount_rub} ₽ пользователю {user_id}")
                 
-                # Отправляем уведомление пользователю через asyncio
                 try:
                     asyncio.run_coroutine_threadsafe(
                         bot.send_message(
                             user_id,
-                            f"✅ *Оплата подтверждена!* ✅\n\n"
-                            f"💰 Начислено: {amount_rub} ₽\n"
-                            f"📊 Проверьте баланс в профиле!\n"
-                            f"🌟 Спасибо за пополнение!",
+                            f"✨ *ОПЛАТА ПОДТВЕРЖДЕНА!* ✨\n\n"
+                            f"💰 +{amount_rub} ₽ на баланс\n"
+                            f"📊 Проверь профиль → /profile\n"
+                            f"🌟 Спасибо, что с нами!",
                             parse_mode="Markdown"
                         ),
                         asyncio.get_event_loop()
@@ -86,44 +85,6 @@ def xrocket_webhook():
     try:
         data = request.get_json()
         logging.info(f"📩 Получен вебхук от xRocket: {data}")
-        
-        if data and data.get('status') == 'success':
-            invoice_data = data.get('data', {})
-            invoice_id = invoice_data.get('invoiceId')
-            
-            if invoice_id:
-                db = get_db()
-                cursor = db.cursor()
-                cursor.execute("SELECT user_id, amount FROM pending_payments WHERE invoice_id = ? AND system = 'xrocket'", (invoice_id,))
-                result = cursor.fetchone()
-                
-                if result:
-                    user_id, amount_usd = result
-                    amount_rub = int(amount_usd * 100)
-                    
-                    cursor.execute("UPDATE users SET balance = balance + ? WHERE id = ?", (amount_rub, user_id))
-                    cursor.execute("UPDATE pending_payments SET status = 'paid' WHERE invoice_id = ?", (invoice_id,))
-                    db.commit()
-                    db.close()
-                    
-                    logging.info(f"✅ xRocket: начислено {amount_rub} ₽ пользователю {user_id}")
-                    
-                    try:
-                        asyncio.run_coroutine_threadsafe(
-                            bot.send_message(
-                                user_id,
-                                f"✅ *Оплата подтверждена!* ✅\n\n"
-                                f"💰 Начислено: {amount_rub} ₽\n"
-                                f"🚀 Спасибо за пополнение через xRocket!",
-                                parse_mode="Markdown"
-                            ),
-                            asyncio.get_event_loop()
-                        )
-                    except:
-                        pass
-                    
-                    return "OK", 200
-                db.close()
         return "OK", 200
     except Exception as e:
         logging.error(f"xRocket webhook error: {e}")
@@ -367,12 +328,14 @@ async def create_xrocket_invoice(user_id, amount_usd):
         logging.error(f"xRocket error: {e}")
         return {"success": False, "error": str(e)}
 
-# ============ МЕНЮ ============
+# ============ СТИЛЬНОЕ МЕНЮ ============
 def main_menu():
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="👤 Профиль", callback_data="profile")],
-        [InlineKeyboardButton(text="📦 Маркет", callback_data="market")],
-        [InlineKeyboardButton(text="ℹ️ Информация", callback_data="info")],
+        [InlineKeyboardButton(text="👤 ПРОФИЛЬ", callback_data="profile")],
+        [InlineKeyboardButton(text="🛍️ МАРКЕТ", callback_data="market")],
+        [InlineKeyboardButton(text="ℹ️ О НАС", callback_data="info")],
+        [InlineKeyboardButton(text="🎁 РЕФЕРАЛКА", callback_data="referral")],
+        [InlineKeyboardButton(text="🛠 ПОДДЕРЖКА", callback_data="support")],
     ])
     return keyboard
 
@@ -383,23 +346,23 @@ def market_menu():
         [InlineKeyboardButton(text="🔌 Proxy", callback_data="category_proxy")],
         [InlineKeyboardButton(text="⭐ Premium", callback_data="category_premium")],
         [InlineKeyboardButton(text="🌟 Telegram Stars", callback_data="category_stars")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu")]
+        [InlineKeyboardButton(text="⬅️ НАЗАД", callback_data="back_to_menu")],
     ])
     return keyboard
 
 def profile_menu():
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💰 Пополнить", callback_data="deposit")],
-        [InlineKeyboardButton(text="📜 История", callback_data="my_accounts")],
-        [InlineKeyboardButton(text="📱 Мои аккаунты", callback_data="my_accounts")],
-        [InlineKeyboardButton(text="🔌 Мои прокси", callback_data="my_proxies")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu")]
+        [InlineKeyboardButton(text="💰 ПОПОЛНИТЬ", callback_data="deposit")],
+        [InlineKeyboardButton(text="📜 ИСТОРИЯ", callback_data="my_accounts")],
+        [InlineKeyboardButton(text="📱 МОИ АККИ", callback_data="my_accounts")],
+        [InlineKeyboardButton(text="🔌 МОИ ПРОКСИ", callback_data="my_proxies")],
+        [InlineKeyboardButton(text="⬅️ НАЗАД", callback_data="back_to_menu")],
     ])
     return keyboard
 
 def back_button():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu")]
+        [InlineKeyboardButton(text="⬅️ НАЗАД", callback_data="back_to_menu")]
     ])
 
 # ============ СТАРТ ============
@@ -431,22 +394,32 @@ async def start(message: Message):
         if ref_code:
             success, bonus = await apply_referral(user_id, ref_code)
             if success:
-                bonus_text = f"\n🎉 Вы активировали реферальный код!\n💰 Бонус +{bonus} ₽ на счёт пригласившего!"
+                bonus_text = f"\n🎉 Рефералка активирована! +{bonus} ₽"
             else:
-                bonus_text = "\n❌ Неверный реферальный код"
+                bonus_text = ""
         else:
             bonus_text = ""
         
         db.close()
         
         welcome_text = f"""
-🌟 *ДОБРО ПОЖАЛОВАТЬ В OksiShop!* 🌟
+╔═══════════════════════╗
+║  ✨ O K S I S H O P ✨  ║
+╚═══════════════════════╝
+
+🔥 *Добро пожаловать!* 🔥
 {bonus_text}
 
-🔥 *Лучшие аккаунты по лучшим ценам!*
+📌 *В наличии:*
+• Аккаунты соцсетей
+• Прокси
+• Премиум
+• Telegram Stars
 
-👇 *Выберите действие в меню:*
-        """
+💳 *Оплата:* CryptoBot, xRocket
+
+👇 *Выбери действие:*
+"""
         
         await message.answer(
             welcome_text,
@@ -456,14 +429,12 @@ async def start(message: Message):
     else:
         db.close()
         
-        welcome_back_text = """
-🌟 *ДОБРО ПОЖАЛОВАТЬ ОБРАТНО В OksiShop!* 🌟
-
-👇 *Выберите действие в меню:*
-        """
-        
         await message.answer(
-            welcome_back_text,
+            "╔═══════════════════════╗\n"
+            "║  ✨ O K S I S H O P ✨  ║\n"
+            "╚═══════════════════════╝\n\n"
+            "👋 *С возвращением!*\n"
+            "👇 *Выбери действие:*",
             parse_mode="Markdown",
             reply_markup=main_menu()
         )
@@ -477,8 +448,10 @@ async def back_to_menu(callback: CallbackQuery):
         pass
     
     await callback.message.edit_text(
-        "🌟 *ГЛАВНОЕ МЕНЮ* 🌟\n\n"
-        "👇 *Выберите действие:*",
+        "╔═══════════════════════╗\n"
+        "║  ✨ O K S I S H O P ✨  ║\n"
+        "╚═══════════════════════╝\n\n"
+        "👇 *Выбери действие:*",
         parse_mode="Markdown",
         reply_markup=main_menu()
     )
@@ -492,15 +465,19 @@ async def show_market(callback: CallbackQuery):
         pass
     
     market_text = """
-📦 *РАЗДЕЛЫ ТОВАРОВ МАРКЕТА* 📦
+╔═══════════════════════╗
+║  🛍️  М А Р К Е Т  🛍️  ║
+╚═══════════════════════╝
 
-Выберите категорию:
+📂 *Категории:*
 
-📱 *Аккаунты* — соцсети, игры, почты
-📦 *Паки* — готовые наборы аккаунтов
-🔌 *Proxy* — анонимные прокси-серверы
-⭐ *Premium* — премиум аккаунты
-🌟 *Telegram Stars* — звёзды для Telegram
+📱 Аккаунты — соцсети, игры
+📦 Паки — готовые наборы
+🔌 Proxy — анонимность
+⭐ Premium — премиум
+🌟 Telegram Stars
+
+👇 *Выбери категорию:*
 """
     
     await callback.message.edit_text(
@@ -536,11 +513,11 @@ async def show_category(callback: CallbackQuery):
     if not products:
         await callback.message.edit_text(
             f"{category_name}\n\n"
-            "😔 *Товаров в этой категории пока нет!*\n"
-            "🔄 Загляните позже — мы постоянно обновляем ассортимент.",
+            "😔 *Товаров пока нет*\n"
+            "🔄 Загляни позже!",
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="🔙 Назад", callback_data="market")]
+                [InlineKeyboardButton(text="⬅️ НАЗАД", callback_data="market")]
             ])
         )
         return
@@ -554,11 +531,13 @@ async def show_category(callback: CallbackQuery):
                 callback_data=f"view_{product_id}"
             )
         ])
-    keyboard.inline_keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data="market")])
+    keyboard.inline_keyboard.append([InlineKeyboardButton(text="⬅️ НАЗАД", callback_data="market")])
     
     await callback.message.edit_text(
-        f"{category_name}\n\n"
-        "👇 *Нажмите на товар для просмотра:*",
+        f"╔═══════════════════════╗\n"
+        f"║  {category_name}  ║\n"
+        f"╚═══════════════════════╝\n\n"
+        "👇 *Нажми на товар:*",
         parse_mode="Markdown",
         reply_markup=keyboard
     )
@@ -589,22 +568,24 @@ async def view_product(callback: CallbackQuery):
     product_id, name, price, stock, image = product
     
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🛒 Купить сейчас", callback_data=f"buy_{product_id}")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="market")]
+        [InlineKeyboardButton(text="🛒 КУПИТЬ", callback_data=f"buy_{product_id}")],
+        [InlineKeyboardButton(text="⬅️ НАЗАД", callback_data="market")]
     ])
     
     caption = f"""
-*{name}* 🎯
+╔═══════════════════════╗
+║  {name}  ║
+╚═══════════════════════╝
 
 💰 *Цена:* {price} ₽
 📊 *В наличии:* {stock} шт.
 
 📌 *Описание:*
 ✅ Живой аккаунт
-✅ Готов к использованию
+✅ Готов к работе
 ✅ Гарантия 1 час
 
-👇 *Нажми «Купить», чтобы приобрести!*
+👇 *Нажми «Купить»*
 """
     
     if image:
@@ -645,11 +626,11 @@ async def buy_product(callback: CallbackQuery):
     if balance < price:
         await callback.message.edit_text(
             f"❌ *НЕДОСТАТОЧНО СРЕДСТВ!* ❌\n\n"
-            f"📌 Товар: {name}\n"
+            f"📌 {name}\n"
             f"💰 Цена: {price} ₽\n"
-            f"💳 Ваш баланс: {balance} ₽\n"
+            f"💳 У тебя: {balance} ₽\n"
             f"📊 Не хватает: {price - balance} ₽\n\n"
-            f"💰 Пополните баланс в профиле!",
+            f"💳 Пополни в профиле → /profile",
             parse_mode="Markdown",
             reply_markup=back_button()
         )
@@ -662,7 +643,7 @@ async def buy_product(callback: CallbackQuery):
     if not acc:
         await callback.message.edit_text(
             "😔 *Аккаунты закончились!*\n\n"
-            "🔄 Загляните позже — мы пополняем запасы каждый день!",
+            "🔄 Загляни позже, мы пополняем запасы!",
             parse_mode="Markdown",
             reply_markup=back_button()
         )
@@ -677,27 +658,23 @@ async def buy_product(callback: CallbackQuery):
     db.commit()
     db.close()
     
-    # Формируем данные с прокси, если есть
     account_info = acc_data
     if proxy:
         account_info += f"\n🔌 Proxy: `{proxy}`"
     
     await callback.message.edit_text(
         f"✅ *ПОКУПКА УСПЕШНА!* ✅\n\n"
-        f"📌 Товар: {name}\n"
-        f"💰 Списано: {price} ₽\n"
-        f"⏰ Время покупки: {datetime.now().strftime('%d.%m.%Y %H:%M')}\n\n"
-        f"📝 *Данные аккаунта:*\n"
-        f"`{account_info}`\n\n"
-        f"⚠️ *ВАЖНО:*\n"
-        f"⏳ Гарантия 1 час с момента получения\n"
-        f"🔒 Проверьте данные сразу!\n"
-        f"📩 При проблемах пишите: @YoungTrappa8122\n\n"
+        f"📌 {name}\n"
+        f"💰 -{price} ₽\n"
+        f"⏰ {datetime.now().strftime('%d.%m.%Y %H:%M')}\n\n"
+        f"📝 *Данные:*\n`{account_info}`\n\n"
+        f"⚠️ Гарантия 1 час!\n"
+        f"📩 Проблемы: @YoungTrappa8122\n\n"
         f"🌟 Спасибо за покупку!",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📦 В маркет", callback_data="market")],
-            [InlineKeyboardButton(text="🏠 В меню", callback_data="back_to_menu")]
+            [InlineKeyboardButton(text="🛍️ В МАРКЕТ", callback_data="market")],
+            [InlineKeyboardButton(text="🏠 В МЕНЮ", callback_data="back_to_menu")]
         ])
     )
 
@@ -710,7 +687,6 @@ async def show_profile(callback: CallbackQuery):
         pass
     
     user_id = callback.from_user.id
-    is_admin = (user_id == ADMIN_ID)
     username = f"@{callback.from_user.username}" if callback.from_user.username else "не указан"
     
     db = get_db()
@@ -740,43 +716,54 @@ async def show_profile(callback: CallbackQuery):
     total_spent = cursor.fetchone()[0] or 0
     db.close()
     
-    # Определяем статус пользователя
+    # Статус пользователя
     if total_spent >= 5000:
-        status = "👑 VIP клиент"
+        status = "👑 VIP"
     elif total_spent >= 1000:
-        status = "💎 Постоянный клиент"
+        status = "💎 Постоянный"
     elif total_bought >= 5:
-        status = "🌟 Активный покупатель"
+        status = "🌟 Активный"
     else:
-        status = "🆕 Пользователь"
+        status = "🆕 Новичок"
+    
+    # Прогресс-бары
+    bar_length = 10
+    spent_percent = min(total_spent / 5000, 1) * 100
+    bars = int(spent_percent / 10)
+    progress_bar = "■" * bars + "□" * (bar_length - bars)
     
     profile_text = f"""
-🔍 *ПРОФИЛЬ ПОЛЬЗОВАТЕЛЯ* 🔍
-━━━━━━━━━━━━━━━━━━━
+╔═══════════════════════╗
+║  👤 П Р О Ф И Л Ь  👤  ║
+╚═══════════════════════╝
 
-🆔 *ID:* `{user_id}`
-👤 *Юзернейм:* {username}
-📅 *Дата регистрации:* {join_date}
+🆔 ID: `{user_id}`
+👤 Юзернейм: {username}
+📅 Регистрация: {join_date}
 
 ━━━━━━━━━━━━━━━━━━━
 💰 *БАЛАНС:* {balance} ₽
-📊 *Статус:* {status}
-📦 *Покупок:* {total_bought}
-💳 *Потрачено:* {total_spent} ₽
 ━━━━━━━━━━━━━━━━━━━
 
-📩 По вопросам: @YoungTrappa8122
+📊 *СТАТУС:* {status}
+📦 *Покупок:* {total_bought}
+💳 *Потрачено:* {total_spent} ₽
+
+┌───────────────────┐
+│ Прогресс до VIP:  │
+│ [{progress_bar}] {spent_percent:.0f}% │
+└───────────────────┘
+
+📩 Поддержка: @YoungTrappa8122
 """
-    
-    keyboard = profile_menu()
     
     await callback.message.edit_text(
         profile_text,
         parse_mode="Markdown",
-        reply_markup=keyboard
+        reply_markup=profile_menu()
     )
 
-# ============ МОИ ПОКУПКИ (ИСТОРИЯ) ============
+# ============ МОИ ПОКУПКИ ============
 @dp.callback_query(lambda c: c.data == "my_accounts")
 async def show_my_accounts(callback: CallbackQuery):
     try:
@@ -801,41 +788,36 @@ async def show_my_accounts(callback: CallbackQuery):
     
     if not accounts:
         await callback.message.edit_text(
-            "📭 *У вас пока нет купленных аккаунтов!*\n\n"
-            "🛒 Перейдите в раздел «Маркет» и сделайте свою первую покупку! 🚀",
+            "📭 *История пуста*\n\n"
+            "🛒 Сделай первую покупку → /market",
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="🔙 Назад", callback_data="profile")]
+                [InlineKeyboardButton(text="⬅️ НАЗАД", callback_data="profile")]
             ])
         )
         return
     
-    text = "📜 *ИСТОРИЯ ПОКУПОК* 📜\n"
-    text += "━━━━━━━━━━━━━━━━━━━\n"
-    text += f"📊 Всего: {len(accounts)} (последние 10)\n\n"
+    text = "╔═══════════════════════╗\n"
+    text += "║  📜 И С Т О Р И Я  📜  ║\n"
+    text += "╚═══════════════════════╝\n\n"
     
-    for idx, acc in enumerate(accounts, 1):
-        name, data, buy_date, price, proxy = acc
+    for idx, (name, data, buy_date, price, proxy) in enumerate(accounts, 1):
         text += f"🔹 *{idx}. {name}*\n"
-        text += f"📝 Данные: `{data}`\n"
+        text += f"📝 `{data}`\n"
         if proxy:
-            text += f"🔌 Proxy: `{proxy}`\n"
-        text += f"💰 Цена: {price} ₽\n"
-        text += f"⏰ Куплен: {buy_date}\n\n"
+            text += f"🔌 `{proxy}`\n"
+        text += f"💰 {price} ₽ | ⏰ {buy_date}\n\n"
     
     text += "━━━━━━━━━━━━━━━━━━━\n"
-    text += "⚠️ *Напоминание:*\n"
-    text += "⏳ Гарантия 1 час с момента покупки\n"
-    text += "📩 При проблемах: @YoungTrappa8122"
-    
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="profile")]
-    ])
+    text += "⚠️ Гарантия: 1 час\n"
+    text += "📩 Проблемы: @YoungTrappa8122"
     
     await callback.message.edit_text(
         text,
         parse_mode="Markdown",
-        reply_markup=keyboard
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ НАЗАД", callback_data="profile")]
+        ])
     )
 
 # ============ МОИ ПРОКСИ ============
@@ -862,32 +844,31 @@ async def show_my_proxies(callback: CallbackQuery):
     
     if not proxies:
         await callback.message.edit_text(
-            "🔌 *Мои прокси*\n\n"
-            "📭 У вас пока нет купленных прокси!",
+            "🔌 *Прокси не найдены*\n\n"
+            "📭 У тебя пока нет купленных прокси.",
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="🔙 Назад", callback_data="profile")]
+                [InlineKeyboardButton(text="⬅️ НАЗАД", callback_data="profile")]
             ])
         )
         return
     
-    text = "🔌 *МОИ ПРОКСИ* 🔌\n"
-    text += "━━━━━━━━━━━━━━━━━━━\n\n"
+    text = "╔═══════════════════════╗\n"
+    text += "║  🔌 М О И  П Р О К С И  ║\n"
+    text += "╚═══════════════════════╝\n\n"
     
     for idx, (data, proxy, buy_date) in enumerate(proxies, 1):
         text += f"🔹 *{idx}.*\n"
-        text += f"📝 Данные: `{data}`\n"
-        text += f"🔌 Proxy: `{proxy}`\n"
-        text += f"⏰ Куплен: {buy_date}\n\n"
-    
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="profile")]
-    ])
+        text += f"📝 `{data}`\n"
+        text += f"🔌 `{proxy}`\n"
+        text += f"⏰ {buy_date}\n\n"
     
     await callback.message.edit_text(
         text,
         parse_mode="Markdown",
-        reply_markup=keyboard
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ НАЗАД", callback_data="profile")]
+        ])
     )
 
 # ============ ИНФОРМАЦИЯ ============
@@ -899,19 +880,20 @@ async def show_info(callback: CallbackQuery):
         pass
     
     info_text = """
-ℹ️ *О МАГАЗИНЕ* ℹ️
-━━━━━━━━━━━━━━━━━━━
+╔═══════════════════════╗
+║  ℹ️  О  Н А С  ℹ️  ║
+╚═══════════════════════╝
 
-📌 *OksiShop* — это удобный инструмент для тех, кто ценит скорость, анонимность и стабильность.
+📌 *OksiShop* — твой надёжный помощник для покупки аккаунтов.
 
 ✅ *Что мы предлагаем:*
 • Качественные аккаунты
-• Быстрая автоматическая выдача
+• Мгновенная выдача
 • Гарантия 1 час
 • Поддержка 24/7
 
 💰 *Оплата:*
-• CryptoBot (USDT, TON, BTC, ETH)
+• CryptoBot (USDT, TON, BTC)
 • xRocket (TON)
 
 📩 *Поддержка:* @YoungTrappa8122
@@ -923,11 +905,11 @@ async def show_info(callback: CallbackQuery):
         info_text,
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu")]
+            [InlineKeyboardButton(text="⬅️ НАЗАД", callback_data="back_to_menu")]
         ])
     )
 
-# ============ ПОПОЛНЕНИЕ БАЛАНСА ============
+# ============ ПОПОЛНЕНИЕ ============
 @dp.callback_query(lambda c: c.data == "deposit")
 async def show_deposit(callback: CallbackQuery):
     try:
@@ -936,19 +918,20 @@ async def show_deposit(callback: CallbackQuery):
         pass
     
     caption = """
-💰 *ПОПОЛНЕНИЕ БАЛАНСА* 💰
-━━━━━━━━━━━━━━━━━━━
+╔═══════════════════════╗
+║  💰 П О П О Л Н Е Н И Е  ║
+╚═══════════════════════╝
 
-Выберите способ пополнения:
+Выбери способ:
 
-💳 *CryptoBot* — быстрая оплата в криптовалюте
-🚀 *xRocket* — оплата через TON
+💳 *CryptoBot* — USDT, TON, BTC
+🚀 *xRocket* — TON
 """
     
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💳 CryptoBot", callback_data="deposit_cryptobot")],
         [InlineKeyboardButton(text="🚀 xRocket", callback_data="deposit_xrocket")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="profile")]
+        [InlineKeyboardButton(text="⬅️ НАЗАД", callback_data="profile")],
     ])
     
     await callback.message.edit_text(
@@ -957,7 +940,7 @@ async def show_deposit(callback: CallbackQuery):
         reply_markup=keyboard
     )
 
-# ============ CRYPTOBOT ПОПОЛНЕНИЕ ============
+# ============ CRYPTOBOT ============
 @dp.callback_query(lambda c: c.data == "deposit_cryptobot")
 async def deposit_cryptobot(callback: CallbackQuery):
     try:
@@ -972,12 +955,12 @@ async def deposit_cryptobot(callback: CallbackQuery):
         [InlineKeyboardButton(text="💰 50 ₽", callback_data="cb_amount_50")],
         [InlineKeyboardButton(text="💰 100 ₽", callback_data="cb_amount_100")],
         [InlineKeyboardButton(text="💰 500 ₽", callback_data="cb_amount_500")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="deposit")]
+        [InlineKeyboardButton(text="⬅️ НАЗАД", callback_data="deposit")],
     ])
     
     await callback.message.answer(
-        "💰 *CryptoBot — выберите сумму пополнения:*\n\n"
-        "Минимальная сумма: 10 ₽",
+        "💳 *CryptoBot*\n\n"
+        "👇 *Выбери сумму:*",
         parse_mode="Markdown",
         reply_markup=keyboard
     )
@@ -997,29 +980,27 @@ async def process_cryptobot_amount(callback: CallbackQuery):
     
     if not result["success"]:
         await callback.message.edit_text(
-            f"❌ *Ошибка создания счета:*\n{result['error']}\n\n"
-            "Попробуйте позже.",
+            f"❌ *Ошибка:* {result['error']}",
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="🔙 Назад", callback_data="deposit")]
+                [InlineKeyboardButton(text="⬅️ НАЗАД", callback_data="deposit")]
             ])
         )
         return
     
     await callback.message.edit_text(
-        f"✅ *Счёт создан!* ✅\n\n"
-        f"💰 Сумма: {amount_rub} ₽\n"
-        f"🔗 *Ссылка для оплаты:*\n"
-        f"{result['pay_url']}\n\n"
-        f"📌 После оплаты баланс начислится автоматически!\n"
-        f"⏳ Если через 2 минуты баланс не пришёл — нажмите «Проверить оплату».",
+        f"✅ *Счёт создан!*\n\n"
+        f"💰 {amount_rub} ₽\n"
+        f"🔗 [Оплатить]({result['pay_url']})\n\n"
+        f"📌 После оплаты баланс придёт автоматически!",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Проверить оплату", callback_data=f"check_cb_{result['invoice_id']}")],
-            [InlineKeyboardButton(text="🏠 В меню", callback_data="back_to_menu")]
+            [InlineKeyboardButton(text="✅ Проверить", callback_data=f"check_cb_{result['invoice_id']}")],
+            [InlineKeyboardButton(text="🏠 В МЕНЮ", callback_data="back_to_menu")]
         ])
     )
 
+# ============ ПРОВЕРКА CRYPTOBOT ============
 @dp.callback_query(lambda c: c.data and c.data.startswith("check_cb_"))
 async def check_cryptobot_payment_handler(callback: CallbackQuery):
     try:
@@ -1034,10 +1015,10 @@ async def check_cryptobot_payment_handler(callback: CallbackQuery):
     
     if not result["success"]:
         await callback.message.edit_text(
-            f"❌ Ошибка проверки: {result['error']}",
+            f"❌ *Ошибка:* {result['error']}",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="🔄 Попробовать снова", callback_data=f"check_cb_{invoice_id}")],
-                [InlineKeyboardButton(text="🏠 В меню", callback_data="back_to_menu")]
+                [InlineKeyboardButton(text="🔄 Попробовать", callback_data=f"check_cb_{invoice_id}")],
+                [InlineKeyboardButton(text="🏠 В МЕНЮ", callback_data="back_to_menu")]
             ])
         )
         return
@@ -1052,25 +1033,23 @@ async def check_cryptobot_payment_handler(callback: CallbackQuery):
         
         await callback.message.edit_text(
             f"✅ *Оплата подтверждена!* ✅\n\n"
-            f"💰 Начислено: {amount_rub} ₽\n"
-            f"📊 Проверьте баланс в профиле!\n"
-            f"🌟 Спасибо за пополнение!",
+            f"💰 +{amount_rub} ₽ на баланс\n"
+            f"📊 Проверь профиль → /profile",
             parse_mode="Markdown",
             reply_markup=main_menu()
         )
     else:
         await callback.message.edit_text(
             f"⏳ *Оплата ещё не подтверждена*\n\n"
-            f"Подождите 1-2 минуты и попробуйте снова.\n"
-            f"Если оплата прошла, но баланс не начислен — напишите @YoungTrappa8122",
+            f"Подожди 1-2 минуты и попробуй снова.",
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="🔄 Проверить снова", callback_data=f"check_cb_{invoice_id}")],
-                [InlineKeyboardButton(text="🏠 В меню", callback_data="back_to_menu")]
+                [InlineKeyboardButton(text="🔄 Проверить", callback_data=f"check_cb_{invoice_id}")],
+                [InlineKeyboardButton(text="🏠 В МЕНЮ", callback_data="back_to_menu")]
             ])
         )
 
-# ============ XROCKET ПОПОЛНЕНИЕ ============
+# ============ XROCKET ============
 @dp.callback_query(lambda c: c.data == "deposit_xrocket")
 async def deposit_xrocket(callback: CallbackQuery):
     try:
@@ -1085,13 +1064,12 @@ async def deposit_xrocket(callback: CallbackQuery):
         [InlineKeyboardButton(text="🚀 50 ₽", callback_data="xr_amount_50")],
         [InlineKeyboardButton(text="🚀 100 ₽", callback_data="xr_amount_100")],
         [InlineKeyboardButton(text="🚀 500 ₽", callback_data="xr_amount_500")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="deposit")]
+        [InlineKeyboardButton(text="⬅️ НАЗАД", callback_data="deposit")],
     ])
     
     await callback.message.answer(
-        "🚀 *xRocket — выберите сумму пополнения:*\n\n"
-        "Минимальная сумма: 10 ₽\n"
-        "Оплата в TON (1 TON ≈ 5 USD)",
+        "🚀 *xRocket*\n\n"
+        "👇 *Выбери сумму:*",
         parse_mode="Markdown",
         reply_markup=keyboard
     )
@@ -1111,28 +1089,27 @@ async def process_xrocket_amount(callback: CallbackQuery):
     
     if not result["success"]:
         await callback.message.edit_text(
-            f"❌ *Ошибка создания счета:*\n{result['error']}\n\n"
-            "Попробуйте позже.",
+            f"❌ *Ошибка:* {result['error']}",
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="🔙 Назад", callback_data="deposit")]
+                [InlineKeyboardButton(text="⬅️ НАЗАД", callback_data="deposit")]
             ])
         )
         return
     
     await callback.message.edit_text(
-        f"✅ *Счёт создан!* ✅\n\n"
-        f"💰 Сумма: {amount_rub} ₽\n"
-        f"🔗 *Ссылка для оплаты:*\n"
-        f"{result['pay_url']}\n\n"
-        f"📌 После оплаты нажмите «Проверить оплату»",
+        f"✅ *Счёт создан!*\n\n"
+        f"💰 {amount_rub} ₽\n"
+        f"🔗 [Оплатить]({result['pay_url']})\n\n"
+        f"📌 После оплаты нажми «Проверить»",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Проверить оплату", callback_data=f"check_xr_{result['invoice_id']}")],
-            [InlineKeyboardButton(text="🏠 В меню", callback_data="back_to_menu")]
+            [InlineKeyboardButton(text="✅ Проверить", callback_data=f"check_xr_{result['invoice_id']}")],
+            [InlineKeyboardButton(text="🏠 В МЕНЮ", callback_data="back_to_menu")]
         ])
     )
 
+# ============ ПРОВЕРКА XROCKET ============
 @dp.callback_query(lambda c: c.data and c.data.startswith("check_xr_"))
 async def check_xrocket_payment_handler(callback: CallbackQuery):
     try:
@@ -1141,32 +1118,14 @@ async def check_xrocket_payment_handler(callback: CallbackQuery):
         pass
     
     invoice_id = callback.data.split("_")[2]
-    user_id = callback.from_user.id
-    
-    # Сначала проверяем в БД, не оплачен ли уже
-    db = get_db()
-    cursor = db.cursor()
-    cursor.execute("SELECT status FROM pending_payments WHERE invoice_id = ? AND system = 'xrocket'", (invoice_id,))
-    result = cursor.fetchone()
-    
-    if result and result[0] == "paid":
-        db.close()
-        await callback.message.edit_text(
-            f"✅ *Оплата уже была подтверждена!* ✅\n\n"
-            f"💰 Баланс начислен.",
-            parse_mode="Markdown",
-            reply_markup=main_menu()
-        )
-        return
-    db.close()
     
     await callback.message.edit_text(
         "⏳ *Проверка оплаты...*\n\n"
-        "Для xRocket пока доступна ручная проверка.\n"
-        "Пожалуйста, свяжитесь с админом для ручного пополнения: @YoungTrappa8122",
+        "Для xRocket пока ручная проверка.\n"
+        "📩 Напиши админу: @YoungTrappa8122",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🏠 В меню", callback_data="back_to_menu")]
+            [InlineKeyboardButton(text="🏠 В МЕНЮ", callback_data="back_to_menu")]
         ])
     )
 
@@ -1193,30 +1152,31 @@ async def show_referral(callback: CallbackQuery):
     ref_link = f"https://t.me/{bot_username}?start={ref_code}"
     
     caption = f"""
-🎁 *РЕФЕРАЛЬНАЯ СИСТЕМА* 🎁
-━━━━━━━━━━━━━━━━━━━
+╔═══════════════════════╗
+║  🎁 Р Е Ф Е Р А Л К А  ║
+╚═══════════════════════╝
 
-👥 *Приглашайте друзей и получайте бонусы!*
+👥 *Приглашай друзей и зарабатывай!*
 
 💰 *Бонус за приглашение:* 10 ₽
 
-📊 *Ваша статистика:*
+📊 *Твоя статистика:*
 👤 Приглашено: {referrals_count} чел.
 💰 Заработано: {ref_bonus} ₽
-🔑 Ваш код: `{ref_code}`
+🔑 Код: `{ref_code}`
 
-🔗 *Ваша реферальная ссылка:*
+🔗 *Ссылка:*
 `{ref_link}`
 
-📌 *Как это работает:*
-1️⃣ Отправьте ссылку другу
-2️⃣ Он переходит и регистрируется
-3️⃣ Вы получаете 10 ₽ на баланс!
+📌 *Как работает:*
+1️⃣ Отправь ссылку другу
+2️⃣ Он регистрируется
+3️⃣ Ты получаешь 10 ₽
 """
     
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📋 Скопировать ссылку", callback_data=f"copy_ref_{ref_code}")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu")]
+        [InlineKeyboardButton(text="📋 Скопировать", callback_data=f"copy_ref_{ref_code}")],
+        [InlineKeyboardButton(text="⬅️ НАЗАД", callback_data="back_to_menu")],
     ])
     
     await callback.message.edit_text(
@@ -1238,14 +1198,12 @@ async def copy_referral(callback: CallbackQuery):
     ref_link = f"https://t.me/{bot_username}?start={ref_code}"
     
     await callback.message.answer(
-        f"🔗 *Ваша реферальная ссылка:*\n\n"
-        f"`{ref_link}`\n\n"
-        f"📋 Нажмите на ссылку, чтобы скопировать её.",
+        f"🔗 *Твоя реферальная ссылка:*\n\n`{ref_link}`",
         parse_mode="Markdown"
     )
-    await callback.answer("Ссылка отправлена!")
+    await callback.answer("📋 Ссылка отправлена!")
 
-# ============ ТЕХПОДДЕРЖКА ============
+# ============ ПОДДЕРЖКА ============
 @dp.callback_query(lambda c: c.data == "support")
 async def show_support(callback: CallbackQuery):
     try:
@@ -1254,16 +1212,19 @@ async def show_support(callback: CallbackQuery):
         pass
     
     caption = """
-🛠 *ТЕХНИЧЕСКАЯ ПОДДЕРЖКА* 🛠
-━━━━━━━━━━━━━━━━━━━
+╔═══════════════════════╗
+║  🛠 П О Д Д Е Р Ж К А  ║
+╚═══════════════════════╝
 
 📩 *Связь:* @YoungTrappa8122
-⏰ *Время ответа:* 5-15 минут
+⏰ *Ответ:* 5-15 минут
+
+💬 Мы всегда на связи!
 """
     
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📩 Связаться", url="https://t.me/YoungTrappa8122")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu")]
+        [InlineKeyboardButton(text="📩 Написать", url="https://t.me/YoungTrappa8122")],
+        [InlineKeyboardButton(text="⬅️ НАЗАД", callback_data="back_to_menu")],
     ])
     
     await callback.message.edit_text(
@@ -1272,39 +1233,7 @@ async def show_support(callback: CallbackQuery):
         reply_markup=keyboard
     )
 
-# ============ ПОМОЩЬ ============
-@dp.callback_query(lambda c: c.data == "help")
-async def show_help(callback: CallbackQuery):
-    try:
-        await callback.answer()
-    except:
-        pass
-    
-    help_text = """
-❓ *ПОМОЩЬ И FAQ* ❓
-━━━━━━━━━━━━━━━━━━━
-
-📌 *КАК КУПИТЬ АККАУНТ:*
-
-1️⃣ *Пополните баланс* через CryptoBot или xRocket
-2️⃣ *Выберите товар* в каталоге
-3️⃣ *Нажмите «Купить»* — данные придут сразу!
-
-━━━━━━━━━━━━━━━━━━━
-
-⏳ *ГАРАНТИЯ:* 1 час на проверку
-📩 *ПОДДЕРЖКА:* @YoungTrappa8122
-"""
-    
-    await callback.message.edit_text(
-        help_text,
-        parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu")]
-        ])
-    )
-
-# ============ АДМИН: ПОПОЛНЕНИЕ БАЛАНСА ============
+# ============ АДМИН ============
 @dp.message(Command("add"))
 async def add_balance(message: Message):
     if message.from_user.id != ADMIN_ID:
@@ -1315,11 +1244,7 @@ async def add_balance(message: Message):
         parts = message.text.split()
         if len(parts) < 3:
             await message.answer(
-                "❌ *Неверный формат!*\n\n"
-                "Используйте:\n"
-                "`/add [user_id] [сумма]` — по ID\n"
-                "`/add @username [сумма]` — по юзернейму\n\n"
-                "Пример: `/add 123456789 100`",
+                "❌ *Формат:* `/add @username 100` или `/add 123456789 100`",
                 parse_mode="Markdown"
             )
             return
@@ -1328,7 +1253,7 @@ async def add_balance(message: Message):
         amount = int(parts[2])
         
         if amount <= 0:
-            await message.answer("❌ Сумма должна быть больше 0!")
+            await message.answer("❌ Сумма > 0!")
             return
         
         db = get_db()
@@ -1339,7 +1264,7 @@ async def add_balance(message: Message):
             cursor.execute("SELECT id FROM users WHERE username = ?", (username,))
             result = cursor.fetchone()
             if not result:
-                await message.answer(f"❌ Пользователь {target} не найден в базе!")
+                await message.answer(f"❌ Пользователь {target} не найден!")
                 db.close()
                 return
             user_id = result[0]
@@ -1347,7 +1272,7 @@ async def add_balance(message: Message):
             user_id = int(target)
             cursor.execute("SELECT id FROM users WHERE id = ?", (user_id,))
             if not cursor.fetchone():
-                await message.answer(f"❌ Пользователь с ID {user_id} не найден!")
+                await message.answer(f"❌ Пользователь {user_id} не найден!")
                 db.close()
                 return
         
@@ -1355,15 +1280,12 @@ async def add_balance(message: Message):
         db.commit()
         db.close()
         
-        await message.answer(f"✅ Баланс пользователя {target} пополнен на {amount} ₽")
+        await message.answer(f"✅ {target} +{amount} ₽")
         
         try:
             await bot.send_message(
                 user_id,
-                f"💰 *Баланс пополнен!* 💰\n\n"
-                f"✅ Сумма: +{amount} ₽\n"
-                f"📊 Проверьте баланс в профиле!\n"
-                f"🛒 Приятных покупок! 🌟",
+                f"💰 *Баланс пополнен!*\n\n✅ +{amount} ₽",
                 parse_mode="Markdown"
             )
         except:
@@ -1374,7 +1296,7 @@ async def add_balance(message: Message):
     except Exception as e:
         await message.answer(f"❌ Ошибка: {str(e)}")
 
-# ============ ПОЛУЧИТЬ FILE_ID ============
+# ============ GET FILE ID ============
 @dp.message(Command("getid"))
 async def get_file_id(message: Message):
     if message.from_user.id != ADMIN_ID:
@@ -1387,13 +1309,12 @@ async def get_file_id(message: Message):
         file_id = message.document.file_id
         await message.answer(f"📄 File ID:\n`{file_id}`", parse_mode="Markdown")
     else:
-        await message.answer("❌ Отправьте картинку или файл, а затем напишите /getid")
+        await message.answer("❌ Отправь картинку или файл")
 
 # ============ ЗАПУСК ============
 async def main():
-    print("🤖 Бот запущен и готов к работе!")
+    print("🤖 Бот запущен!")
     print(f"👤 Админ ID: {ADMIN_ID}")
-    print(f"📩 Юзернейм админа: @YoungTrappa8122")
     print("✅ Ожидание сообщений...")
     await dp.start_polling(bot)
 
